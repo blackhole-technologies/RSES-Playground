@@ -104,28 +104,34 @@ export async function registerRoutes(
 async function seedConfigs() {
   const existing = await storage.getConfigs();
   if (existing.length === 0) {
-    const exampleConfig = `# Complete RSES config example
+    const exampleConfig = `# Hybrid RSES Architecture Example
+[defaults]
+auto_topic = prefix
+auto_type = suffix
+delimiter = -
+
+[overrides.topic]
+util = tools-and-utilities
+viz = visualizations
+sacred-geo = sacred-geometry
+
+[overrides.type]
+lib = library
+viz = visualization
+
 [sets]
 tools       = tool-*
 quantum     = quantum-*
 web         = web-* | webapp-*
-viz         = viz-* | visual-*
-utils       = util-* | utility-*
-docs        = doc-* | docs-*
 
 [sets.attributes]
 claude      = {source = claude}
-python      = {files ~ *.py}
-javascript  = {files ~ *.js | *.ts}
 
 [sets.compound]
-claude-tools    = $tools & $claude
-active-web      = $web
+claude-quantum = $quantum & $claude
 
 [rules.topic]
-$tools              -> tools-and-utilities
-$quantum            -> quantum
-$web                -> web-apps
+$quantum & $claude -> quantum/claude
 
 [rules.filetype]
 *.py            -> code/python
