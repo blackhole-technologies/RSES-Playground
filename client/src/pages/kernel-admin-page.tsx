@@ -1,0 +1,744 @@
+/**
+ * @file kernel-admin-page.tsx
+ * @description Admin page for kernel module management.
+ *
+ * Provides a UI for:
+ * - Viewing all modules and their status
+ * - Enabling/disabling modules
+ * - Viewing kernel health
+ * - Browsing event history
+ *
+ * @module pages/kernel-admin-page
+ * @phase Phase 2 - Admin UI
+ * @created 2026-02-01
+ */
+
+import { useState } from "react";
+import { Link } from "wouter";
+import {
+  useKernelModules,
+  useKernelModule,
+  useKernelHealth,
+  useKernelEvents,
+  useEnableModule,
+  useDisableModule,
+  useKernelAvailable,
+  getModuleStateColor,
+  getHealthColor,
+  getTierColor,
+  type KernelModuleSummary,
+  type ModuleTier,
+} from "@/hooks/use-kernel";
+import { useToast } from "@/hooks/use-toast";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Activity,
+  ArrowLeft,
+  Box,
+  CheckCircle2,
+  AlertTriangle,
+  XCircle,
+  Clock,
+  Zap,
+  RefreshCw,
+  ChevronRight,
+  Power,
+  PowerOff,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+
+// =============================================================================
+// KERNEL NOT AVAILABLE COMPONENT
+// =============================================================================
+
+function KernelNotAvailable() {
+  return (
+    <div className="flex items-center justify-center h-[60vh]">
+      <Card className="w-[400px]">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <PowerOff className="h-5 w-5 text-muted-foreground" />
+            Kernel Not Available
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="text-muted-foreground">
+          <p className="mb-4">
+            The kernel module system is not enabled on the server.
+          </p>
+          <p className="text-sm">
+            To enable the kernel, start the server with:
+          </p>
+          <pre className="mt-2 p-2 bg-muted rounded text-xs">
+            ENABLE_KERNEL=true npm run dev
+          </pre>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// =============================================================================
+// HEALTH OVERVIEW COMPONENT
+// =============================================================================
+
+function HealthOverview() {
+  const { data: health, isLoading, error } = useKernelHealth();
+
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Activity className="h-5 w-5" />
+            System Health
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Skeleton className="h-20 w-full" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (error || !health) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-red-500">
+            <XCircle className="h-5 w-5" />
+            Health Check Failed
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="text-muted-foreground">
+          Unable to fetch kernel health status.
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const healthIcon = {
+    healthy: <CheckCircle2 className="h-6 w-6 text-green-500" />,
+    degraded: <AlertTriangle className="h-6 w-6 text-yellow-500" />,
+    unhealthy: <XCircle className="h-6 w-6 text-red-500" />,
+  };
+
+  const moduleCount = Object.keys(health.modules).length;
+  const healthyCount = Object.values(health.modules).filter(
+    (m) => m.status === "healthy"
+  ).length;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Activity className="h-5 w-5" />
+          System Health
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="flex items-center gap-4">
+          {healthIcon[health.status]}
+          <div>
+            <p className="text-lg font-semibold capitalize">{health.status}</p>
+            <p className="text-sm text-muted-foreground">
+              {healthyCount}/{moduleCount} modules healthy
+            </p>
+          </div>
+          <div className="ml-auto text-sm text-muted-foreground">
+            <Clock className="h-4 w-4 inline mr-1" />
+            {new Date(health.timestamp).toLocaleTimeString()}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// =============================================================================
+// MODULE CARD COMPONENT
+// =============================================================================
+
+interface ModuleCardProps {
+  module: KernelModuleSummary;
+  onSelect: (id: string) => void;
+  onToggle: (id: string, enabled: boolean) => void;
+  isToggling: boolean;
+}
+
+function ModuleCard({
+  module,
+  onSelect,
+  onToggle,
+  isToggling,
+}: ModuleCardProps) {
+  const stateColor = getModuleStateColor(module.state);
+  const tierColor = getTierColor(module.tier);
+
+  return (
+    <Card
+      className="cursor-pointer hover:border-primary/50 transition-colors"
+      onClick={() => onSelect(module.id)}
+    >
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between">
+          <div className="flex-1">
+            <div className="flex items-center gap-2 mb-1">
+              <Box className="h-4 w-4 text-muted-foreground" />
+              <span className="font-medium">{module.name}</span>
+              <Badge variant="outline" className={cn("text-xs", tierColor)}>
+                {module.tier}
+              </Badge>
+            </div>
+            <p className="text-sm text-muted-foreground mb-2">
+              v{module.version}
+            </p>
+            <div className="flex items-center gap-2">
+              <span className={cn("text-sm capitalize", stateColor)}>
+                {module.state}
+              </span>
+              {module.health && (
+                <span
+                  className={cn(
+                    "text-sm",
+                    getHealthColor(module.health.status)
+                  )}
+                >
+                  ({module.health.status})
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Switch
+              checked={module.enabled && module.state === "running"}
+              disabled={isToggling || module.tier === "kernel"}
+              onClick={(e) => {
+                e.stopPropagation();
+              }}
+              onCheckedChange={(checked) => {
+                onToggle(module.id, checked);
+              }}
+            />
+            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// =============================================================================
+// MODULE LIST COMPONENT
+// =============================================================================
+
+interface ModuleListProps {
+  tier?: ModuleTier;
+  onSelect: (id: string) => void;
+}
+
+function ModuleList({ tier, onSelect }: ModuleListProps) {
+  const { data: modules, isLoading, error, refetch } = useKernelModules();
+  const enableModule = useEnableModule();
+  const disableModule = useDisableModule();
+  const { toast } = useToast();
+
+  const [confirmDisable, setConfirmDisable] = useState<{
+    id: string;
+    name: string;
+    tier: ModuleTier;
+  } | null>(null);
+
+  const handleToggle = (moduleId: string, enabled: boolean) => {
+    const module = modules?.find((m) => m.id === moduleId);
+    if (!module) return;
+
+    if (enabled) {
+      enableModule.mutate(moduleId, {
+        onSuccess: (data) => {
+          toast({
+            title: "Module enabled",
+            description: `${module.name} has been enabled successfully.`,
+          });
+        },
+        onError: (error) => {
+          toast({
+            title: "Failed to enable module",
+            description: error instanceof Error ? error.message : "An error occurred",
+            variant: "destructive",
+          });
+        },
+      });
+    } else {
+      // Show confirmation for core modules
+      if (module.tier === "core") {
+        setConfirmDisable({ id: moduleId, name: module.name, tier: module.tier });
+      } else {
+        disableModule.mutate({ moduleId }, {
+          onSuccess: () => {
+            toast({
+              title: "Module disabled",
+              description: `${module.name} has been disabled.`,
+            });
+          },
+          onError: (error) => {
+            toast({
+              title: "Failed to disable module",
+              description: error instanceof Error ? error.message : "An error occurred",
+              variant: "destructive",
+            });
+          },
+        });
+      }
+    }
+  };
+
+  const handleConfirmDisable = () => {
+    if (confirmDisable) {
+      const moduleName = confirmDisable.name;
+      disableModule.mutate({
+        moduleId: confirmDisable.id,
+        force: confirmDisable.tier === "core",
+      }, {
+        onSuccess: () => {
+          toast({
+            title: "Core module disabled",
+            description: `${moduleName} has been forcefully disabled.`,
+          });
+        },
+        onError: (error) => {
+          toast({
+            title: "Failed to disable module",
+            description: error instanceof Error ? error.message : "An error occurred",
+            variant: "destructive",
+          });
+        },
+      });
+      setConfirmDisable(null);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-24 w-full" />
+        <Skeleton className="h-24 w-full" />
+        <Skeleton className="h-24 w-full" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <Card>
+        <CardContent className="p-6 text-center">
+          <XCircle className="h-8 w-8 text-red-500 mx-auto mb-2" />
+          <p className="text-muted-foreground">Failed to load modules</p>
+          <Button variant="outline" className="mt-4" onClick={() => refetch()}>
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Retry
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const filteredModules = tier
+    ? modules?.filter((m) => m.tier === tier)
+    : modules;
+
+  if (!filteredModules?.length) {
+    return (
+      <Card>
+        <CardContent className="p-6 text-center text-muted-foreground">
+          No modules found
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const isToggling = enableModule.isPending || disableModule.isPending;
+
+  return (
+    <>
+      <div className="space-y-3">
+        {filteredModules.map((module) => (
+          <ModuleCard
+            key={module.id}
+            module={module}
+            onSelect={onSelect}
+            onToggle={handleToggle}
+            isToggling={isToggling}
+          />
+        ))}
+      </div>
+
+      <AlertDialog
+        open={!!confirmDisable}
+        onOpenChange={() => setConfirmDisable(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Disable Core Module?</AlertDialogTitle>
+            <AlertDialogDescription>
+              <strong>{confirmDisable?.name}</strong> is a core module.
+              Disabling it may affect system functionality. Other modules may
+              depend on it.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmDisable}
+              className="bg-red-500 hover:bg-red-600"
+            >
+              Disable Anyway
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+}
+
+// =============================================================================
+// MODULE DETAIL SHEET
+// =============================================================================
+
+interface ModuleDetailSheetProps {
+  moduleId: string | null;
+  onClose: () => void;
+}
+
+function ModuleDetailSheet({ moduleId, onClose }: ModuleDetailSheetProps) {
+  const { data: module, isLoading } = useKernelModule(moduleId);
+
+  return (
+    <Sheet open={!!moduleId} onOpenChange={() => onClose()}>
+      <SheetContent className="w-[400px] sm:w-[540px]">
+        <SheetHeader>
+          <SheetTitle className="flex items-center gap-2">
+            <Box className="h-5 w-5" />
+            {isLoading ? "Loading..." : module?.name || "Module Details"}
+          </SheetTitle>
+          <SheetDescription>
+            {module?.description || "View module configuration and status"}
+          </SheetDescription>
+        </SheetHeader>
+
+        {isLoading ? (
+          <div className="mt-6 space-y-4">
+            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-8 w-full" />
+          </div>
+        ) : module ? (
+          <ScrollArea className="h-[calc(100vh-200px)] mt-6">
+            <div className="space-y-6 pr-4">
+              {/* Status */}
+              <div>
+                <h4 className="text-sm font-medium mb-2">Status</h4>
+                <div className="flex items-center gap-3">
+                  <Badge
+                    variant="outline"
+                    className={getTierColor(module.tier)}
+                  >
+                    {module.tier}
+                  </Badge>
+                  <span
+                    className={cn(
+                      "capitalize",
+                      getModuleStateColor(module.state)
+                    )}
+                  >
+                    {module.state}
+                  </span>
+                  {module.health && (
+                    <span
+                      className={cn(getHealthColor(module.health.status))}
+                    >
+                      {module.health.status}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Version */}
+              <div>
+                <h4 className="text-sm font-medium mb-2">Version</h4>
+                <p className="text-muted-foreground">{module.version}</p>
+              </div>
+
+              {/* Dependencies */}
+              {module.dependencies?.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-medium mb-2">Dependencies</h4>
+                  <div className="space-y-2">
+                    {module.dependencies.map((dep) => (
+                      <div
+                        key={dep.moduleId}
+                        className="flex items-center gap-2 text-sm"
+                      >
+                        <span>{dep.moduleId}</span>
+                        <Badge variant="secondary" className="text-xs">
+                          {dep.version}
+                        </Badge>
+                        {dep.optional && (
+                          <Badge variant="outline" className="text-xs">
+                            optional
+                          </Badge>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Events */}
+              {module.events && (
+                <div>
+                  <h4 className="text-sm font-medium mb-2">Events</h4>
+                  {module.events.emits && module.events.emits.length > 0 && (
+                    <div className="mb-2">
+                      <p className="text-xs text-muted-foreground mb-1">
+                        Emits:
+                      </p>
+                      <div className="flex flex-wrap gap-1">
+                        {module.events.emits.map((event) => (
+                          <Badge key={event} variant="outline" className="text-xs">
+                            {event}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {module.events.listens && module.events.listens.length > 0 && (
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1">
+                        Listens:
+                      </p>
+                      <div className="flex flex-wrap gap-1">
+                        {module.events.listens.map((event) => (
+                          <Badge key={event} variant="outline" className="text-xs">
+                            {event}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Health Details */}
+              {module.health && (
+                <div>
+                  <h4 className="text-sm font-medium mb-2">Health Details</h4>
+                  <p className="text-sm text-muted-foreground">
+                    {module.health.message || "No additional details"}
+                  </p>
+                  {module.health.timestamp && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Last check:{" "}
+                      {new Date(module.health.timestamp).toLocaleString()}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          </ScrollArea>
+        ) : (
+          <div className="mt-6 text-center text-muted-foreground">
+            Module not found
+          </div>
+        )}
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+// =============================================================================
+// EVENT LOG COMPONENT
+// =============================================================================
+
+function EventLog() {
+  const { data: events, isLoading, error } = useKernelEvents(50);
+
+  if (isLoading) {
+    return (
+      <div className="space-y-2">
+        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-10 w-full" />
+      </div>
+    );
+  }
+
+  if (error || !events) {
+    return (
+      <Card>
+        <CardContent className="p-6 text-center text-muted-foreground">
+          Failed to load events
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (events.length === 0) {
+    return (
+      <Card>
+        <CardContent className="p-6 text-center text-muted-foreground">
+          No events recorded
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <ScrollArea className="h-[400px]">
+      <div className="space-y-2 pr-4">
+        {events.map((event, index) => (
+          <div
+            key={`${event.type}-${index}`}
+            className="flex items-start gap-3 p-3 rounded-lg bg-muted/50"
+          >
+            <Zap className="h-4 w-4 text-muted-foreground mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-sm">{event.type}</span>
+                {event.source && (
+                  <Badge variant="outline" className="text-xs">
+                    {event.source}
+                  </Badge>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground mt-1 truncate">
+                {JSON.stringify(event.data)}
+              </p>
+            </div>
+            <span className="text-xs text-muted-foreground whitespace-nowrap">
+              {new Date(event.timestamp).toLocaleTimeString()}
+            </span>
+          </div>
+        ))}
+      </div>
+    </ScrollArea>
+  );
+}
+
+// =============================================================================
+// MAIN PAGE COMPONENT
+// =============================================================================
+
+export default function KernelAdminPage() {
+  const { data: isAvailable, isLoading: checkingAvailability } =
+    useKernelAvailable();
+  const [selectedModuleId, setSelectedModuleId] = useState<string | null>(null);
+
+  if (checkingAvailability) {
+    return (
+      <div className="container mx-auto p-6">
+        <div className="flex items-center justify-center h-[60vh]">
+          <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAvailable) {
+    return (
+      <div className="container mx-auto p-6">
+        <KernelNotAvailable />
+      </div>
+    );
+  }
+
+  return (
+    <div className="container mx-auto p-6">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <div className="flex items-center gap-3 mb-1">
+            <Link href="/editor">
+              <Button variant="ghost" size="sm" className="gap-1 text-muted-foreground hover:text-foreground -ml-2">
+                <ArrowLeft className="h-4 w-4" />
+                Editor
+              </Button>
+            </Link>
+          </div>
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <Power className="h-6 w-6" />
+            Kernel Administration
+          </h1>
+          <p className="text-muted-foreground">
+            Manage modules, monitor health, and view events
+          </p>
+        </div>
+      </div>
+
+      <div className="grid gap-6 mb-6">
+        <HealthOverview />
+      </div>
+
+      <Tabs defaultValue="all" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="all">All Modules</TabsTrigger>
+          <TabsTrigger value="core">Core</TabsTrigger>
+          <TabsTrigger value="optional">Optional</TabsTrigger>
+          <TabsTrigger value="events">Event Log</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="all">
+          <ModuleList onSelect={setSelectedModuleId} />
+        </TabsContent>
+
+        <TabsContent value="core">
+          <ModuleList tier="core" onSelect={setSelectedModuleId} />
+        </TabsContent>
+
+        <TabsContent value="optional">
+          <ModuleList tier="optional" onSelect={setSelectedModuleId} />
+        </TabsContent>
+
+        <TabsContent value="events">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Zap className="h-5 w-5" />
+                Recent Events
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <EventLog />
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+
+      <ModuleDetailSheet
+        moduleId={selectedModuleId}
+        onClose={() => setSelectedModuleId(null)}
+      />
+    </div>
+  );
+}
