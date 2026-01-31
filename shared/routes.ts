@@ -91,6 +91,30 @@ export const api = {
           filetypes: z.array(z.string())
         })
       }
+    },
+    preview: {
+      method: 'POST' as const,
+      path: '/api/engine/preview',
+      input: z.object({
+        configContent: z.string(),
+        testPath: z.string(),
+        manualAttributes: z.record(z.string()).optional()
+      }),
+      responses: {
+        200: z.object({
+          derivedAttributes: z.record(z.string()),
+          combinedAttributes: z.record(z.string()),
+          matchedSets: z.array(z.string()),
+          symlinks: z.array(z.object({
+            type: z.enum(['topic', 'type']),
+            name: z.string(),
+            target: z.string(),
+            category: z.string()
+          })),
+          parsed: z.any().optional()
+        }),
+        400: errorSchemas.validation
+      }
     }
   }
 };

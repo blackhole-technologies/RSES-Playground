@@ -3,7 +3,7 @@ import type { Server } from "http";
 import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
-import { RsesParser } from "./lib/rses";
+import { RsesParser, deriveAttributesFromPath } from "./lib/rses";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -82,7 +82,7 @@ export async function registerRoutes(
     try {
       const { configContent, filename, attributes } = api.engine.test.input.parse(req.body);
       const parseResult = RsesParser.parse(configContent);
-      
+
       if (!parseResult.valid || !parseResult.parsed) {
         return res.status(400).json({ message: "Config is invalid, cannot test" });
       }
@@ -95,6 +95,63 @@ export async function registerRoutes(
     }
   });
 
+  // Preview endpoint - shows live symlink visualization
+  app.post(api.engine.preview.path, (req, res) => {
+    try {
+      const { configContent, testPath, manualAttributes = {} } = api.engine.preview.input.parse(req.body);
+
+      const parseResult = RsesParser.parse(configContent);
+      if (!parseResult.valid || !parseResult.parsed) {
+        return res.status(400).json({
+          message: "Config is invalid",
+          errors: parseResult.errors
+        });
+      }
+
+      // Derive attributes from path and merge with manual attributes
+      const derived = deriveAttributesFromPath(testPath);
+      const combined = { ...derived, ...manualAttributes };
+
+      // Extract project name from path
+      const projectName = testPath.split('/').filter(Boolean).pop() || testPath;
+
+      // Run the test with combined attributes
+      const testResult = RsesParser.test(parseResult.parsed, projectName, combined);
+
+      // Generate symlink preview
+      const symlinks: Array<{type: 'topic' | 'type', name: string, target: string, category: string}> = [];
+
+      for (const topic of testResult.topics) {
+        symlinks.push({
+          type: 'topic',
+          name: projectName,
+          target: testPath,
+          category: `by-topic/${topic}`
+        });
+      }
+
+      for (const type of testResult.types) {
+        symlinks.push({
+          type: 'type',
+          name: projectName,
+          target: testPath,
+          category: `by-type/${type}`
+        });
+      }
+
+      res.json({
+        derivedAttributes: derived,
+        combinedAttributes: combined,
+        matchedSets: testResult.sets,
+        symlinks,
+        parsed: parseResult.parsed
+      });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Internal preview error" });
+    }
+  });
+
   // Seed default config if empty
   await seedConfigs();
 
@@ -104,7 +161,9 @@ export async function registerRoutes(
 async function seedConfigs() {
   const existing = await storage.getConfigs();
   if (existing.length === 0) {
-    const exampleConfig = `# Hybrid RSES Architecture Example
+    const exampleConfig = `# RSES Configuration with Auto-Derived Attributes
+# Test with: by-ai/claude/quantum-app
+
 [defaults]
 auto_topic = prefix
 auto_type = suffix
@@ -113,35 +172,48 @@ delimiter = -
 [overrides.topic]
 util = tools-and-utilities
 viz = visualizations
-sacred-geo = sacred-geometry
 
 [overrides.type]
 lib = library
-viz = visualization
+app = application
 
 [sets]
-tools       = tool-*
-quantum     = quantum-*
-web         = web-* | webapp-*
+quantum = quantum-*
+web     = web-* | webapp-*
+tools   = tool-*
 
 [sets.attributes]
-claude      = {source = claude}
+# Match specific AI source
+claude  = {source = claude}
+chatgpt = {source = chatgpt}
+# Match any AI source (wildcard)
+any-ai  = {source = *}
 
 [sets.compound]
 claude-quantum = $quantum & $claude
 
 [rules.topic]
+# Compound set rules
 $quantum & $claude -> quantum/claude
+$quantum -> quantum
+
+# Attribute-based rules with variable substitution
+{source = *} -> ai/$source
+
+[rules.type]
+*-app -> application
+*-lib -> library
+*-viz -> visualization
 
 [rules.filetype]
-*.py            -> code/python
-*.js            -> code/javascript
-*.ts            -> code/typescript
+*.py  -> code/python
+*.js  -> code/javascript
+*.ts  -> code/typescript
 `;
     await storage.createConfig({
       name: "Default Example",
       content: exampleConfig,
-      description: "A starter configuration based on the complete example."
+      description: "Demonstrates auto-derived attributes and variable substitution. Test with: by-ai/claude/quantum-app"
     });
   }
 }

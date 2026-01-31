@@ -1,21 +1,37 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Plus, Trash2, Play, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Plus, Trash2, Play, AlertCircle, CheckCircle2, Sparkles } from "lucide-react";
 import { useTestConfig } from "@/hooks/use-configs";
-import { StatusBadge } from "./ui/status-badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { cn } from "@/lib/utils";
 
 interface TestPanelProps {
   configContent: string;
+}
+
+// Helper to derive attributes from path (mirrors server-side logic)
+function deriveAttributesFromPath(filepath: string): Record<string, string> {
+  const parts = filepath.split('/').filter(Boolean);
+  const derived: Record<string, string> = {};
+
+  if (parts[0] === 'by-ai' && parts.length >= 2) {
+    derived.source = parts[1];
+  }
+
+  return derived;
 }
 
 export function TestPanel({ configContent }: TestPanelProps) {
   const [filename, setFilename] = useState("example.txt");
   const [attributes, setAttributes] = useState<{ key: string; value: string }[]>([]);
   const testMutation = useTestConfig();
+
+  // Detect auto-derived attributes from filename (if it looks like a path)
+  const derivedAttributes = useMemo(() => deriveAttributesFromPath(filename), [filename]);
+  const hasDerivedAttrs = Object.keys(derivedAttributes).length > 0;
 
   const handleAddAttribute = () => {
     setAttributes([...attributes, { key: "", value: "" }]);
@@ -32,15 +48,21 @@ export function TestPanel({ configContent }: TestPanelProps) {
   };
 
   const handleRunTest = () => {
-    const attrRecord = attributes.reduce((acc, curr) => {
+    const manualAttrs = attributes.reduce((acc, curr) => {
       if (curr.key) acc[curr.key] = curr.value;
       return acc;
     }, {} as Record<string, string>);
 
+    // Combine derived and manual attributes (manual takes precedence)
+    const combinedAttrs = { ...derivedAttributes, ...manualAttrs };
+
+    // Extract just the project name for the filename matcher
+    const projectName = filename.split('/').filter(Boolean).pop() || filename;
+
     testMutation.mutate({
       configContent,
-      filename,
-      attributes: attrRecord
+      filename: projectName,
+      attributes: combinedAttrs
     });
   };
 
@@ -54,14 +76,39 @@ export function TestPanel({ configContent }: TestPanelProps) {
         
         <div className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="filename" className="text-xs uppercase text-muted-foreground font-bold">Filename</Label>
-            <Input 
-              id="filename" 
-              value={filename} 
+            <div className="flex items-center justify-between">
+              <Label htmlFor="filename" className="text-xs uppercase text-muted-foreground font-bold">Filename / Path</Label>
+              {hasDerivedAttrs && (
+                <span className="flex items-center gap-1 text-xs text-amber-500">
+                  <Sparkles className="h-3 w-3" />
+                  Auto-derive
+                </span>
+              )}
+            </div>
+            <Input
+              id="filename"
+              value={filename}
               onChange={(e) => setFilename(e.target.value)}
-              className="font-mono text-sm bg-background border-input"
-              placeholder="path/to/file.ext"
+              className={cn(
+                "font-mono text-sm bg-background border-input",
+                hasDerivedAttrs && "border-amber-500/30 focus:border-amber-500"
+              )}
+              placeholder="project-name or by-ai/claude/project"
             />
+            {hasDerivedAttrs && (
+              <div className="flex flex-wrap gap-1.5 mt-1">
+                {Object.entries(derivedAttributes).map(([key, value]) => (
+                  <span
+                    key={key}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                  >
+                    <Sparkles className="h-2.5 w-2.5" />
+                    <span className="opacity-70">{key}:</span>
+                    <span className="font-semibold">{value}</span>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="space-y-2">

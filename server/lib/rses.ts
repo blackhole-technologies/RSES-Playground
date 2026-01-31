@@ -27,6 +27,26 @@ interface Rule {
   line: number;
 }
 
+// Extract attributes from path structure (e.g., by-ai/claude/project → source=claude)
+export function deriveAttributesFromPath(filepath: string): Record<string, string> {
+  const parts = filepath.split('/').filter(Boolean);
+  const derived: Record<string, string> = {};
+
+  // Pattern: by-ai/{source}/{project}
+  if (parts[0] === 'by-ai' && parts.length >= 2) {
+    derived.source = parts[1]; // claude, chatgpt, gemini, cursor
+  }
+
+  return derived;
+}
+
+// Replace $varname with captured attribute values
+export function resolveRuleResult(template: string, attrs: Record<string, string>): string {
+  return template.replace(/\$([a-zA-Z_][a-zA-Z0-9_]*)/g, (_, name) =>
+    attrs[name] !== undefined ? attrs[name] : `$${name}`
+  );
+}
+
 export class RsesParser {
   static parse(content: string): { valid: boolean; errors: ValidationError[]; parsed?: RsesConfig } {
     const errors: ValidationError[] = [];
@@ -116,10 +136,31 @@ export class RsesParser {
      const prefix = segments[0];
      const suffix = segments.length > 1 ? segments[segments.length - 1] : "";
 
+     // Pattern-based set matching
      for (const [name, pattern] of Object.entries(config.sets)) {
         if (this.matchGlob(filename, pattern)) matchedSets.add(name);
      }
 
+     // Attribute-based set matching
+     for (const [name, pattern] of Object.entries(config.attributes)) {
+        // Parse {attr = value} pattern
+        const match = pattern.match(/\{(\w+)\s*=\s*([^}]+)\}/);
+        if (match) {
+          const [, attr, value] = match;
+          const attrValue = attributes[attr];
+          const trimmedValue = value.trim();
+
+          if (trimmedValue === '*') {
+            // Wildcard: match if attribute exists
+            if (attrValue !== undefined) matchedSets.add(name);
+          } else if (attrValue === trimmedValue) {
+            // Exact match
+            matchedSets.add(name);
+          }
+        }
+     }
+
+     // Compound set evaluation
      for (const [name, expr] of Object.entries(config.compound)) {
         if (this.evaluateExpression(expr, matchedSets)) matchedSets.add(name);
      }
@@ -131,25 +172,45 @@ export class RsesParser {
         filetypes: []
      };
 
-     const resolveCategory = (type: 'topic' | 'type', extracted: string, rules: Rule[]) => {
-        for (const rule of rules) {
-           if (this.evaluateExpression(rule.condition, matchedSets) || this.matchGlob(filename, rule.condition)) {
-              return rule.result;
-           }
+     // Helper to check if a rule condition matches
+     const ruleMatches = (condition: string): boolean => {
+        // Check for attribute condition like {source = *} or {source = claude}
+        const attrMatch = condition.match(/\{(\w+)\s*=\s*([^}]+)\}/);
+        if (attrMatch) {
+          const [, attr, value] = attrMatch;
+          const attrValue = attributes[attr];
+          const trimmedValue = value.trim();
+
+          if (trimmedValue === '*') {
+            return attrValue !== undefined;
+          }
+          return attrValue === trimmedValue;
         }
-        const override = config.overrides[type][extracted];
-        if (override) return override;
-        if (config.defaults[`auto_${type}` as keyof typeof config.defaults] !== "false") {
-           return extracted || null;
-        }
-        return null;
+        // Check for set expression or glob pattern
+        return this.evaluateExpression(condition, matchedSets) || this.matchGlob(filename, condition);
      };
 
-     const topic = resolveCategory('topic', prefix, config.rules.topic);
-     if (topic) results.topics.push(topic);
+     const resolveCategory = (type: 'topic' | 'type', extracted: string, rules: Rule[]) => {
+        const results: string[] = [];
+        for (const rule of rules) {
+           if (ruleMatches(rule.condition)) {
+              // Apply variable substitution
+              const resolved = resolveRuleResult(rule.result, attributes);
+              results.push(resolved);
+           }
+        }
+        if (results.length > 0) return results;
 
-     const type = resolveCategory('type', suffix, config.rules.type);
-     if (type) results.types.push(type);
+        const override = config.overrides[type][extracted];
+        if (override) return [override];
+        if (config.defaults[`auto_${type}` as keyof typeof config.defaults] !== "false") {
+           return extracted ? [extracted] : [];
+        }
+        return [];
+     };
+
+     results.topics = resolveCategory('topic', prefix, config.rules.topic);
+     results.types = resolveCategory('type', suffix, config.rules.type);
 
      for (const rule of config.rules.filetype) {
         if (this.matchGlob(filename, rule.condition)) {
@@ -178,7 +239,9 @@ export class RsesParser {
   private static matchGlob(filename: string, pattern: string): boolean {
     const subPatterns = pattern.split('|').map(s => s.trim());
     return subPatterns.some(p => {
-       const escaped = p.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+       // Escape regex special chars INCLUDING * first
+       const escaped = p.replace(/[.+?^${}()|[\]\\*]/g, '\\$&');
+       // Then convert \* back to .* for glob wildcard
        const regexStr = escaped.replace(/\\\*/g, '.*');
        const regex = new RegExp('^' + regexStr + '$');
        return regex.test(filename);

@@ -3,12 +3,12 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/componen
 import { ConfigSidebar } from "@/components/config-sidebar";
 import { EditorTextarea } from "@/components/ui/editor-textarea";
 import { TestPanel } from "@/components/test-panel";
+import { Workbench } from "@/components/workbench/Workbench";
 import { useConfig, useUpdateConfig, useValidateConfig } from "@/hooks/use-configs";
 import { Button } from "@/components/ui/button";
-import { Save, AlertTriangle, Check, Loader2, PlayCircle, Terminal } from "lucide-react";
+import { Save, AlertTriangle, Check, Loader2, PlayCircle, Terminal, Wrench } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useDebounce } from "@/hooks/use-debounce"; // We'll implement this hook separately if needed, but let's assume simple timeout for now
 import { cn } from "@/lib/utils";
 
 // Simple debounce hook implementation inline for completeness
@@ -192,8 +192,15 @@ export default function EditorPage() {
                       <PlayCircle className="h-4 w-4 mr-2" />
                       Test Playground
                     </TabsTrigger>
-                    <TabsTrigger 
-                      value="validation" 
+                    <TabsTrigger
+                      value="preview"
+                      className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:shadow-none rounded-none px-0 h-full text-muted-foreground data-[state=active]:text-foreground"
+                    >
+                      <Wrench className="h-4 w-4 mr-2" />
+                      Workbench
+                    </TabsTrigger>
+                    <TabsTrigger
+                      value="validation"
                       className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:shadow-none rounded-none px-0 h-full text-muted-foreground data-[state=active]:text-foreground"
                     >
                       <Terminal className="h-4 w-4 mr-2" />
@@ -204,6 +211,13 @@ export default function EditorPage() {
 
                 <TabsContent value="test" className="flex-1 m-0 p-0 overflow-hidden">
                   <TestPanel configContent={content} />
+                </TabsContent>
+
+                <TabsContent value="preview" className="flex-1 m-0 p-0 overflow-auto">
+                  <Workbench
+                    configContent={content}
+                    parsedConfig={validateMutation.data?.parsed}
+                  />
                 </TabsContent>
 
                 <TabsContent value="validation" className="flex-1 m-0 p-0 overflow-hidden bg-[#1e1e1e]">
