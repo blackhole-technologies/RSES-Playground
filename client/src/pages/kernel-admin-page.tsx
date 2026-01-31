@@ -13,7 +13,7 @@
  * @created 2026-02-01
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link } from "wouter";
 import {
   useKernelModules,
@@ -67,6 +67,7 @@ import {
   ChevronRight,
   Power,
   PowerOff,
+  GitBranch,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -579,6 +580,255 @@ function ModuleDetailSheet({ moduleId, onClose }: ModuleDetailSheetProps) {
 }
 
 // =============================================================================
+// DEPENDENCY GRAPH COMPONENT
+// =============================================================================
+
+interface GraphNode {
+  id: string;
+  name: string;
+  tier: ModuleTier;
+  state: string;
+  x: number;
+  y: number;
+}
+
+interface GraphEdge {
+  from: string;
+  to: string;
+  optional: boolean;
+}
+
+function DependencyGraph({ onSelect }: { onSelect: (id: string) => void }) {
+  const { data: modules, isLoading, error } = useKernelModules();
+  const [graphData, setGraphData] = useState<{ nodes: GraphNode[]; edges: GraphEdge[] } | null>(null);
+
+  // Fetch dependency details for all modules
+  useEffect(() => {
+    if (!modules || modules.length === 0) return;
+
+    const fetchDependencies = async () => {
+      const nodes: GraphNode[] = [];
+      const edges: GraphEdge[] = [];
+
+      // Position modules in a circle
+      const centerX = 200;
+      const centerY = 150;
+      const radius = 120;
+
+      // Group by tier for better layout
+      const tierOrder: Record<ModuleTier, number> = { kernel: 0, core: 1, optional: 2, "third-party": 3 };
+      const sortedModules = [...modules].sort((a, b) => tierOrder[a.tier] - tierOrder[b.tier]);
+
+      sortedModules.forEach((mod, i) => {
+        const angle = (2 * Math.PI * i) / sortedModules.length - Math.PI / 2;
+        nodes.push({
+          id: mod.id,
+          name: mod.name,
+          tier: mod.tier,
+          state: mod.state,
+          x: centerX + radius * Math.cos(angle),
+          y: centerY + radius * Math.sin(angle),
+        });
+      });
+
+      // Fetch details for each module to get dependencies
+      for (const mod of modules) {
+        try {
+          const response = await fetch(`/api/kernel/modules/${mod.id}`, {
+            credentials: "include",
+          });
+          if (response.ok) {
+            const details = await response.json();
+            if (details.dependencies) {
+              for (const dep of details.dependencies) {
+                edges.push({
+                  from: mod.id,
+                  to: dep.moduleId,
+                  optional: dep.optional || false,
+                });
+              }
+            }
+          }
+        } catch {
+          // Skip failed fetches
+        }
+      }
+
+      setGraphData({ nodes, edges });
+    };
+
+    fetchDependencies();
+  }, [modules]);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-[300px]">
+        <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (error || !modules) {
+    return (
+      <div className="text-center text-muted-foreground p-6">
+        Failed to load module dependencies
+      </div>
+    );
+  }
+
+  if (!graphData) {
+    return (
+      <div className="flex items-center justify-center h-[300px]">
+        <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
+        <span className="ml-2 text-muted-foreground">Building graph...</span>
+      </div>
+    );
+  }
+
+  const { nodes, edges } = graphData;
+
+  // Get node position by ID
+  const getNode = (id: string) => nodes.find((n) => n.id === id);
+
+  // Color by tier
+  const getTierFill = (tier: ModuleTier) => {
+    switch (tier) {
+      case "kernel": return "#a855f7"; // purple
+      case "core": return "#3b82f6"; // blue
+      case "optional": return "#22c55e"; // green
+      case "third-party": return "#f97316"; // orange
+      default: return "#6b7280"; // gray
+    }
+  };
+
+  const getStateOpacity = (state: string) => {
+    return state === "running" ? 1 : 0.5;
+  };
+
+  return (
+    <div className="relative">
+      <svg
+        viewBox="0 0 400 300"
+        className="w-full h-[300px] bg-muted/20 rounded-lg"
+      >
+        <defs>
+          <marker
+            id="arrowhead"
+            markerWidth="10"
+            markerHeight="7"
+            refX="9"
+            refY="3.5"
+            orient="auto"
+          >
+            <polygon points="0 0, 10 3.5, 0 7" fill="#6b7280" />
+          </marker>
+          <marker
+            id="arrowhead-optional"
+            markerWidth="10"
+            markerHeight="7"
+            refX="9"
+            refY="3.5"
+            orient="auto"
+          >
+            <polygon points="0 0, 10 3.5, 0 7" fill="#6b7280" fillOpacity="0.4" />
+          </marker>
+        </defs>
+
+        {/* Edges */}
+        {edges.map((edge, i) => {
+          const fromNode = getNode(edge.from);
+          const toNode = getNode(edge.to);
+          if (!fromNode || !toNode) return null;
+
+          // Calculate edge endpoints (offset from center to edge of circle)
+          const dx = toNode.x - fromNode.x;
+          const dy = toNode.y - fromNode.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          const nodeRadius = 25;
+
+          const startX = fromNode.x + (dx / dist) * nodeRadius;
+          const startY = fromNode.y + (dy / dist) * nodeRadius;
+          const endX = toNode.x - (dx / dist) * (nodeRadius + 5);
+          const endY = toNode.y - (dy / dist) * (nodeRadius + 5);
+
+          return (
+            <line
+              key={`edge-${i}`}
+              x1={startX}
+              y1={startY}
+              x2={endX}
+              y2={endY}
+              stroke="#6b7280"
+              strokeWidth={edge.optional ? 1 : 2}
+              strokeDasharray={edge.optional ? "4 2" : "none"}
+              strokeOpacity={edge.optional ? 0.4 : 0.7}
+              markerEnd={edge.optional ? "url(#arrowhead-optional)" : "url(#arrowhead)"}
+            />
+          );
+        })}
+
+        {/* Nodes */}
+        {nodes.map((node) => (
+          <g
+            key={node.id}
+            className="cursor-pointer"
+            onClick={() => onSelect(node.id)}
+          >
+            <circle
+              cx={node.x}
+              cy={node.y}
+              r={25}
+              fill={getTierFill(node.tier)}
+              fillOpacity={getStateOpacity(node.state)}
+              stroke={node.state === "running" ? "#fff" : "#6b7280"}
+              strokeWidth={2}
+            />
+            <text
+              x={node.x}
+              y={node.y + 4}
+              textAnchor="middle"
+              fill="white"
+              fontSize="10"
+              fontWeight="bold"
+            >
+              {node.name.slice(0, 4)}
+            </text>
+          </g>
+        ))}
+      </svg>
+
+      {/* Legend */}
+      <div className="flex items-center justify-center gap-4 mt-4 text-xs text-muted-foreground">
+        <div className="flex items-center gap-1">
+          <span className="w-3 h-3 rounded-full bg-purple-500" />
+          <span>Kernel</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <span className="w-3 h-3 rounded-full bg-blue-500" />
+          <span>Core</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <span className="w-3 h-3 rounded-full bg-green-500" />
+          <span>Optional</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <span className="w-3 h-3 rounded-full bg-orange-500" />
+          <span>Third-party</span>
+        </div>
+        <div className="flex items-center gap-1 ml-4">
+          <span className="w-4 border-t-2 border-gray-500" />
+          <span>Required</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <span className="w-4 border-t border-gray-500 border-dashed" />
+          <span>Optional</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
 // EVENT LOG COMPONENT
 // =============================================================================
 
@@ -705,6 +955,7 @@ export default function KernelAdminPage() {
           <TabsTrigger value="all">All Modules</TabsTrigger>
           <TabsTrigger value="core">Core</TabsTrigger>
           <TabsTrigger value="optional">Optional</TabsTrigger>
+          <TabsTrigger value="dependencies">Dependencies</TabsTrigger>
           <TabsTrigger value="events">Event Log</TabsTrigger>
         </TabsList>
 
@@ -718,6 +969,20 @@ export default function KernelAdminPage() {
 
         <TabsContent value="optional">
           <ModuleList tier="optional" onSelect={setSelectedModuleId} />
+        </TabsContent>
+
+        <TabsContent value="dependencies">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <GitBranch className="h-5 w-5" />
+                Module Dependencies
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <DependencyGraph onSelect={setSelectedModuleId} />
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="events">

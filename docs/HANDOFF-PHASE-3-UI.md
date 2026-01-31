@@ -1,7 +1,7 @@
 # Phase 3 Kernel UI & Route Migration - Handoff Document
 
 **Date:** 2026-02-01
-**Status:** COMPLETE (3 of 5 high-priority items)
+**Status:** COMPLETE (4 of 5 high-priority items)
 **Context Window:** Started at 25k tokens
 
 ---
@@ -90,6 +90,18 @@ Migrated all `/api/configs/*` route logic into the content module:
 
 **Note:** Legacy routes in `server/routes.ts` remain for backward compatibility.
 
+### 5. Dependency Graph Visualization
+**File:** `client/src/pages/kernel-admin-page.tsx`
+
+Added SVG-based dependency graph visualization:
+- `DependencyGraph` component (~180 lines)
+- Modules displayed as colored circles in a radial layout
+- Dependency arrows between modules (solid = required, dashed = optional)
+- Color-coded by tier: purple (kernel), blue (core), green (optional), orange (third-party)
+- Opacity indicates state (full = running, faded = stopped)
+- Click nodes to view module details
+- New "Dependencies" tab in admin UI
+
 ---
 
 ## Files Changed
@@ -97,22 +109,23 @@ Migrated all `/api/configs/*` route logic into the content module:
 | File | Change |
 |------|--------|
 | `client/src/components/config-sidebar.tsx` | +14 lines (Link import, Settings icon, footer section) |
-| `client/src/pages/kernel-admin-page.tsx` | +40 lines (Link, ArrowLeft, useToast, toast callbacks, back button) |
+| `client/src/pages/kernel-admin-page.tsx` | +220 lines (navigation, toasts, DependencyGraph component, new tab) |
 | `server/modules/content/index.ts` | Rewritten ~500 lines (full CRUD, versions, activity, batch routes) |
 
 ---
 
-## Remaining Work (Phase 3+)
+## Remaining Work (Phase 4+)
 
-### Not Yet Done
-1. **Dependency graph visualization** - Visual display of module dependencies
-2. **Real-time event streaming** - WebSocket for live event updates
+### High Priority
+1. **Real-time event streaming** - WebSocket for live kernel events in admin UI
 
-### Lower Priority (Phase 4+)
-4. Module configuration UI - Edit module config through admin
-5. Module installation - Install third-party modules
-6. Module marketplace - Browse available modules
-7. Audit logging - Track all module changes
+### Medium Priority
+2. Module configuration UI - Edit module config through admin
+3. Module installation - Install third-party modules
+
+### Lower Priority
+4. Module marketplace - Browse available modules
+5. Audit logging - Track all module changes
 
 ---
 
@@ -141,27 +154,27 @@ open https://localhost:5000/admin/kernel   # See "Editor" back link + toast noti
 ## Resume Prompt
 
 ```
-Continue Phase 3 of the RSES CMS project. Read docs/HANDOFF-PHASE-3-UI.md for context.
+Continue Phase 4 of the RSES CMS project. Read docs/HANDOFF-PHASE-3-UI.md for context.
 
-Completed:
+Phase 3 Completed:
 - Navigation link from sidebar to /admin/kernel
 - Back link from kernel admin to /editor
 - Toast notifications on module enable/disable
-- Content module route migration (all config CRUD, versions, activity, batch)
+- Content module route migration (full CRUD, versions, activity, batch)
+- Dependency graph visualization (SVG-based, color-coded by tier)
 
-Remaining work:
-1. Dependency graph visualization - Add visual module dependency display
-2. Real-time event streaming - WebSocket for live kernel events
+Phase 4 Priority:
+1. Real-time event streaming - WebSocket for live kernel events in admin UI
 
 Key files:
-- server/modules/content/index.ts - Content module with routes
-- client/src/pages/kernel-admin-page.tsx - Add dependency graph component
-- server/ws/ - WebSocket infrastructure for event streaming
-- server/kernel/events.ts - Event bus for streaming
+- client/src/pages/kernel-admin-page.tsx - Admin UI with dependency graph
+- server/kernel/events.ts - Event bus to stream from
+- server/ws/index.ts - WebSocket infrastructure
+- client/src/hooks/use-websocket.ts - WebSocket client hook
 ```
 
 ---
 
 *Handoff created: 2026-02-01*
-*Lines changed: ~550*
-*Status: PHASE 3 MOSTLY COMPLETE*
+*Lines changed: ~730*
+*Status: PHASE 3 COMPLETE*
