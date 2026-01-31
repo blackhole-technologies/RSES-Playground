@@ -1,15 +1,19 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Plus, Trash2, Play, AlertCircle, CheckCircle2, Sparkles } from "lucide-react";
+import { Plus, Trash2, Play, AlertCircle, CheckCircle2, Sparkles, Link2, Lightbulb } from "lucide-react";
 import { useTestConfig } from "@/hooks/use-configs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
+import { useLocalStorage } from "@/hooks/use-local-storage";
+import { UnknownCategoryPrompt } from "./UnknownCategoryPrompt";
+import { useToast } from "@/hooks/use-toast";
 
 interface TestPanelProps {
   configContent: string;
+  configId: number | null;
 }
 
 // Helper to derive attributes from path (mirrors server-side logic)
@@ -24,14 +28,43 @@ function deriveAttributesFromPath(filepath: string): Record<string, string> {
   return derived;
 }
 
-export function TestPanel({ configContent }: TestPanelProps) {
+export function TestPanel({ configContent, configId }: TestPanelProps) {
+  // Sync test paths per config using localStorage
+  const [savedPaths, setSavedPaths] = useLocalStorage<Record<string, string>>(
+    "rses-test-paths",
+    {}
+  );
+
   const [filename, setFilename] = useState("example.txt");
   const [attributes, setAttributes] = useState<{ key: string; value: string }[]>([]);
   const testMutation = useTestConfig();
+  const { toast } = useToast();
+
+  // State for unknown category prompt
+  const [showPrompt, setShowPrompt] = useState(false);
+
+  // Sync filename with stored path when config changes
+  useEffect(() => {
+    const key = configId ? `config-${configId}` : "draft";
+    const storedPath = savedPaths[key];
+    if (storedPath) {
+      setFilename(storedPath);
+    } else {
+      setFilename("example.txt");
+    }
+  }, [configId, savedPaths]);
+
+  // Save filename when it changes
+  const handleFilenameChange = (value: string) => {
+    setFilename(value);
+    const key = configId ? `config-${configId}` : "draft";
+    setSavedPaths(prev => ({ ...prev, [key]: value }));
+  };
 
   // Detect auto-derived attributes from filename (if it looks like a path)
   const derivedAttributes = useMemo(() => deriveAttributesFromPath(filename), [filename]);
   const hasDerivedAttrs = Object.keys(derivedAttributes).length > 0;
+  const isSynced = Boolean(savedPaths[configId ? `config-${configId}` : "draft"]);
 
   const handleAddAttribute = () => {
     setAttributes([...attributes, { key: "", value: "" }]);
@@ -78,17 +111,25 @@ export function TestPanel({ configContent }: TestPanelProps) {
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <Label htmlFor="filename" className="text-xs uppercase text-muted-foreground font-bold">Filename / Path</Label>
-              {hasDerivedAttrs && (
-                <span className="flex items-center gap-1 text-xs text-amber-500">
-                  <Sparkles className="h-3 w-3" />
-                  Auto-derive
-                </span>
-              )}
+              <div className="flex items-center gap-2">
+                {isSynced && (
+                  <span className="flex items-center gap-1 text-xs text-emerald-500" title="Path synced for this config">
+                    <Link2 className="h-3 w-3" />
+                    Synced
+                  </span>
+                )}
+                {hasDerivedAttrs && (
+                  <span className="flex items-center gap-1 text-xs text-amber-500">
+                    <Sparkles className="h-3 w-3" />
+                    Auto-derive
+                  </span>
+                )}
+              </div>
             </div>
             <Input
               id="filename"
               value={filename}
-              onChange={(e) => setFilename(e.target.value)}
+              onChange={(e) => handleFilenameChange(e.target.value)}
               className={cn(
                 "font-mono text-sm bg-background border-input",
                 hasDerivedAttrs && "border-amber-500/30 focus:border-amber-500"
@@ -188,7 +229,33 @@ export function TestPanel({ configContent }: TestPanelProps) {
               <ResultSection title="Types" items={testMutation.data.types} color="amber" />
               <ResultSection title="Filetypes" items={testMutation.data.filetypes} color="emerald" />
               
-              {Object.values(testMutation.data).every(arr => Array.isArray(arr) && arr.length === 0) && (
+              {/* Show unmatched indicator with suggestions */}
+              {testMutation.data._unmatched && (
+                <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Lightbulb className="h-4 w-4 text-amber-500" />
+                    <span className="font-medium text-amber-500">No category match found</span>
+                  </div>
+                  {testMutation.data.suggestions && testMutation.data.suggestions.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-sm text-muted-foreground">
+                        {testMutation.data.suggestions.length} suggestion{testMutation.data.suggestions.length !== 1 ? 's' : ''} available
+                      </p>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="border-amber-500/30 text-amber-500 hover:bg-amber-500/10"
+                        onClick={() => setShowPrompt(true)}
+                      >
+                        <Sparkles className="h-3.5 w-3.5 mr-1.5" />
+                        View Suggestions
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {!testMutation.data._unmatched && Object.values(testMutation.data).every(arr => Array.isArray(arr) && arr.length === 0) && (
                  <div className="text-center py-8 text-muted-foreground">
                    <p>No matches returned for this input.</p>
                  </div>
@@ -202,6 +269,26 @@ export function TestPanel({ configContent }: TestPanelProps) {
           )}
         </ScrollArea>
       </div>
+
+      {/* Unknown Category Prompt Dialog */}
+      {testMutation.data && testMutation.data._unmatched && (
+        <UnknownCategoryPrompt
+          open={showPrompt}
+          onOpenChange={setShowPrompt}
+          filename={filename}
+          prefix={testMutation.data.prefix || ""}
+          suffix={testMutation.data.suffix || ""}
+          suggestions={testMutation.data.suggestions || []}
+          onApply={(result) => {
+            toast({
+              title: "Category Applied",
+              description: `Applied "${result.category}" as ${result.type}${result.remember ? " (remembered)" : ""}`,
+            });
+            setShowPrompt(false);
+          }}
+          onSkip={() => setShowPrompt(false)}
+        />
+      )}
     </div>
   );
 }

@@ -53,6 +53,14 @@
   margin-bottom: 0.75rem;
 }
 
+.wb-note.wb-success {
+  color: hsl(142 76% 36%);
+  background: hsl(142 76% 36% / 0.1);
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+  border-left: 3px solid hsl(142 76% 36%);
+}
+
 .wb-empty {
   padding: 1rem;
   text-align: center;
@@ -414,6 +422,15 @@
 
 .wb-button.wb-danger:hover {
   background: hsl(0 84% 60% / 0.1);
+}
+
+.wb-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.wb-button.wb-primary:disabled {
+  background: hsl(217 91% 60% / 0.5);
 }
 
 /* LABEL */

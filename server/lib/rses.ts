@@ -1,6 +1,10 @@
 import { ValidationError } from "@shared/schema";
+import { safeEvaluate, validateExpression } from "./boolean-parser";
+import { validateCompoundSets, getEvaluationOrder } from "./cycle-detector";
+import { getGlobalCache } from "./regex-cache";
+import { validateSetPattern, checkReDoS } from "./redos-checker";
 
-interface RsesConfig {
+export interface RsesConfig {
   defaults: {
     auto_topic: string;
     auto_type: string;
@@ -47,11 +51,26 @@ export function resolveRuleResult(template: string, attrs: Record<string, string
   );
 }
 
+/**
+ * Symbol namespace types for collision detection.
+ * Each set type occupies its own namespace but all are referenced with $name.
+ */
+type SymbolNamespace = 'pattern' | 'attribute' | 'compound';
+
+interface SymbolRegistry {
+  name: string;
+  namespace: SymbolNamespace;
+  line: number;
+}
+
 export class RsesParser {
   static parse(content: string): { valid: boolean; errors: ValidationError[]; parsed?: RsesConfig } {
     const errors: ValidationError[] = [];
     const lines = content.split('\n');
-    
+
+    // Symbol registry for collision detection
+    const symbolRegistry: Map<string, SymbolRegistry> = new Map();
+
     const config: RsesConfig = {
       defaults: { auto_topic: "false", auto_type: "false", delimiter: "-" },
       overrides: { topic: {}, type: {} },
@@ -63,6 +82,29 @@ export class RsesParser {
     };
 
     let currentSection = '';
+
+    /**
+     * Registers a symbol and checks for namespace collisions.
+     * @returns true if registration succeeded, false if collision detected
+     */
+    const registerSymbol = (name: string, namespace: SymbolNamespace, line: number): boolean => {
+      const existing = symbolRegistry.get(name);
+      if (existing) {
+        const namespaceLabels: Record<SymbolNamespace, string> = {
+          pattern: '[sets]',
+          attribute: '[sets.attributes]',
+          compound: '[sets.compound]'
+        };
+        errors.push({
+          line,
+          message: `Symbol collision: '${name}' already defined as ${namespaceLabels[existing.namespace]} set on line ${existing.line}`,
+          code: "E009"
+        });
+        return false;
+      }
+      symbolRegistry.set(name, { name, namespace, line });
+      return true;
+    };
 
     for (let i = 0; i < lines.length; i++) {
       const lineNum = i + 1;
@@ -89,8 +131,10 @@ export class RsesParser {
           errors.push({ line: lineNum, message: "Empty condition or result in rule", code: "E001" });
           continue;
         }
-        if (result.includes('..') || result.startsWith('/')) {
-           errors.push({ line: lineNum, message: "Path traversal detected in rule result", code: "E005" });
+        // Block (not just warn) path traversal attempts
+        if (result.includes('..') || result.startsWith('/') || /^[a-zA-Z]:/.test(result)) {
+           errors.push({ line: lineNum, message: "Path traversal detected in rule result - rule blocked", code: "E005" });
+           continue; // Skip adding this dangerous rule
         }
         const ruleType = currentSection.replace('rules.', '') as keyof typeof config.rules;
         if (config.rules[ruleType]) {
@@ -104,24 +148,74 @@ export class RsesParser {
         if (currentSection === 'defaults') {
           (config.defaults as any)[key] = value;
         } else if (currentSection === 'overrides.topic') {
+          // Block path traversal in overrides
+          if (value.includes('..') || value.startsWith('/') || /^[a-zA-Z]:/.test(value)) {
+            errors.push({ line: lineNum, message: "Path traversal detected in topic override - blocked", code: "E005" });
+            continue;
+          }
           config.overrides.topic[key] = value;
         } else if (currentSection === 'overrides.type') {
+          // Block path traversal in overrides
+          if (value.includes('..') || value.startsWith('/') || /^[a-zA-Z]:/.test(value)) {
+            errors.push({ line: lineNum, message: "Path traversal detected in type override - blocked", code: "E005" });
+            continue;
+          }
           config.overrides.type[key] = value;
         } else if (currentSection === 'sets') {
-          if (/\([^)]*\+[^)]*\)\+/.test(value)) {
-             errors.push({ line: lineNum, message: "Potential ReDoS pattern detected", code: "E004" });
+          // Comprehensive ReDoS pattern validation
+          const patternValidation = validateSetPattern(value);
+          if (!patternValidation.valid) {
+            errors.push({
+              line: lineNum,
+              message: `Unsafe pattern: ${patternValidation.error}`,
+              code: "E004"
+            });
+            continue; // Skip adding dangerous patterns
+          }
+          // Register symbol and check for collisions
+          if (!registerSymbol(key, 'pattern', lineNum)) {
+            continue; // Skip if collision detected
           }
           config.sets[key] = value;
         } else if (currentSection === 'sets.attributes') {
            if (value.includes('{x = }')) {
               errors.push({ line: lineNum, message: "Malformed attribute definition", code: "E006" });
            }
+           // Register symbol and check for collisions
+           if (!registerSymbol(key, 'attribute', lineNum)) {
+             continue; // Skip if collision detected
+           }
            config.attributes[key] = value;
         } else if (currentSection === 'sets.compound') {
+           // Validate compound set expression syntax
+           const validation = validateExpression(value);
+           if (!validation.valid && validation.error) {
+             errors.push({
+               line: lineNum,
+               message: `Invalid compound expression: ${validation.error.message}`,
+               code: "E007"
+             });
+           }
+           // Register symbol and check for collisions
+           if (!registerSymbol(key, 'compound', lineNum)) {
+             continue; // Skip if collision detected
+           }
            config.compound[key] = value;
         } else if (currentSection === 'security') {
            config.security[key] = value;
         }
+      }
+    }
+
+    // Validate compound sets for cycles before returning
+    if (Object.keys(config.compound).length > 0) {
+      const cycleValidation = validateCompoundSets(config.compound);
+      if (!cycleValidation.valid && cycleValidation.error) {
+        errors.push({
+          line: 0, // Cycle involves multiple lines
+          message: cycleValidation.error.message,
+          code: "E008"
+        });
       }
     }
 
@@ -160,9 +254,20 @@ export class RsesParser {
         }
      }
 
-     // Compound set evaluation
-     for (const [name, expr] of Object.entries(config.compound)) {
-        if (this.evaluateExpression(expr, matchedSets)) matchedSets.add(name);
+     // Compound set evaluation (in topological order to handle dependencies)
+     const evalOrder = getEvaluationOrder(config.compound);
+     if (evalOrder) {
+       for (const name of evalOrder) {
+         const expr = config.compound[name];
+         if (expr && this.evaluateExpression(expr, matchedSets)) {
+           matchedSets.add(name);
+         }
+       }
+     } else {
+       // Fallback: evaluate in definition order (cycles should have been caught at parse time)
+       for (const [name, expr] of Object.entries(config.compound)) {
+         if (this.evaluateExpression(expr, matchedSets)) matchedSets.add(name);
+       }
      }
 
      const results: TestMatchResponse = {
@@ -222,28 +327,33 @@ export class RsesParser {
      return results;
   }
 
+  /**
+   * Evaluates a Boolean expression against active sets using a safe recursive descent parser.
+   * Replaced unsafe `new Function()` call with safe parser implementation.
+   *
+   * @security This method no longer uses dynamic code execution.
+   * @param expr - Expression like "$set1 & $set2" or "$a | ($b & $c)"
+   * @param activeSets - Set of set names that are currently true
+   * @returns boolean result of the expression
+   */
   private static evaluateExpression(expr: string, activeSets: Set<string>): boolean {
     if (!expr.includes('$')) return false;
-    let jsExpr = expr
-       .replace(/\$([a-zA-Z0-9_-]+)/g, (_, name) => activeSets.has(name) ? 'true' : 'false')
-       .replace(/&/g, '&&')
-       .replace(/\|/g, '||');
-    try {
-       if (!/^[truefalse\s&|!()]+$/.test(jsExpr)) return false;
-       return new Function(`return ${jsExpr}`)();
-    } catch {
-       return false;
-    }
+    return safeEvaluate(expr, activeSets);
   }
 
+  /**
+   * Matches a filename against a glob pattern using cached regex.
+   * Uses global regex cache to avoid recompiling patterns.
+   *
+   * @param filename - Filename to match
+   * @param pattern - Glob pattern (supports * wildcard and | for OR)
+   * @returns True if filename matches the pattern
+   */
   private static matchGlob(filename: string, pattern: string): boolean {
+    const cache = getGlobalCache();
     const subPatterns = pattern.split('|').map(s => s.trim());
     return subPatterns.some(p => {
-       // Escape regex special chars INCLUDING * first
-       const escaped = p.replace(/[.+?^${}()|[\]\\*]/g, '\\$&');
-       // Then convert \* back to .* for glob wildcard
-       const regexStr = escaped.replace(/\\\*/g, '.*');
-       const regex = new RegExp('^' + regexStr + '$');
+       const regex = cache.getGlobRegex(p);
        return regex.test(filename);
     });
   }

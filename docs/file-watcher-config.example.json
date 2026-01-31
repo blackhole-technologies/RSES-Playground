@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "_comment": "Example configuration for RSES CMS File Watcher",
+
+  "directories": [
+    {
+      "path": "/Users/Alchemy/Projects",
+      "type": "content",
+      "label": "Main Projects Directory",
+      "enabled": true,
+      "ignorePatterns": [
+        "**/node_modules/**",
+        "**/.git/**",
+        "**/dist/**"
+      ],
+      "depth": 3,
+      "followSymlinks": false,
+      "debounce": {
+        "strategy": "batch",
+        "delayMs": 2000,
+        "maxWaitMs": 10000,
+        "maxBatchSize": 100
+      },
+      "handlerOptions": {
+        "autoClassify": true,
+        "rsesConfigId": 1
+      },
+      "priority": 10
+    },
+    {
+      "path": "/Users/Alchemy/Projects/experiments/RSES-Playground/configs",
+      "type": "config",
+      "label": "RSES Configuration Files",
+      "enabled": true,
+      "ignorePatterns": ["*.bak", "*.tmp"],
+      "depth": 1,
+      "debounce": {
+        "strategy": "trailing",
+        "delayMs": 500
+      },
+      "handlerOptions": {
+        "hotReload": true,
+        "validateOnChange": true
+      }
+    },
+    {
+      "path": "/Users/Alchemy/Projects/experiments/RSES-Playground/themes",
+      "type": "theme",
+      "label": "CMS Themes",
+      "enabled": true,
+      "ignorePatterns": ["*.map", "*.bak"],
+      "depth": 5,
+      "debounce": {
+        "strategy": "throttle",
+        "delayMs": 100
+      },
+      "handlerOptions": {
+        "hotReload": true,
+        "cssInject": true
+      }
+    },
+    {
+      "path": "/Users/Alchemy/Projects/experiments/RSES-Playground/modules",
+      "type": "module",
+      "label": "CMS Modules",
+      "enabled": true,
+      "depth": 2,
+      "debounce": {
+        "strategy": "trailing",
+        "delayMs": 1000
+      },
+      "handlerOptions": {
+        "autoDiscover": true,
+        "validateManifest": true
+      }
+    },
+    {
+      "path": "/Users/Alchemy/Projects/by-topic",
+      "type": "symlink",
+      "label": "Topic Symlinks",
+      "enabled": true,
+      "followSymlinks": true,
+      "depth": 2,
+      "debounce": {
+        "strategy": "leading",
+        "delayMs": 0
+      },
+      "handlerOptions": {
+        "syncWithDatabase": true,
+        "healBroken": true,
+        "searchPaths": [
+          "/Users/Alchemy/Projects",
+          "/Users/Alchemy/Projects/experiments"
+        ]
+      }
+    },
+    {
+      "path": "/Users/Alchemy/Projects/experiments/RSES-Playground/uploads",
+      "type": "media",
+      "label": "Media Uploads",
+      "enabled": true,
+      "ignorePatterns": ["*.tmp", ".DS_Store"],
+      "depth": 10,
+      "debounce": {
+        "strategy": "batch",
+        "delayMs": 1000,
+        "maxWaitMs": 5000,
+        "maxBatchSize": 50
+      },
+      "handlerOptions": {
+        "processImages": true,
+        "generateThumbnails": true,
+        "maxFileSize": 104857600
+      }
+    }
+  ],
+
+  "defaultSkipPatterns": [
+    "**/node_modules/**",
+    "**/.git/**",
+    "**/.svn/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/.cache/**",
+    "**/coverage/**",
+    "**/__pycache__/**",
+    "**/venv/**",
+    "**/.venv/**",
+    "**/env/**",
+    "**/.env/**",
+    "**/target/**",
+    "**/vendor/**",
+    "**/.idea/**",
+    "**/.vscode/**",
+    "**/Pods/**",
+    "**/*.egg-info/**",
+    "**/.DS_Store",
+    "**/Thumbs.db",
+    "**/*.log",
+    "**/*.tmp",
+    "**/*.swp",
+    "**/*~"
+  ],
+
+  "resourceLimits": {
+    "maxWatchers": 20,
+    "maxWatchedPaths": 50000,
+    "maxEventsPerSecond": 1000,
+    "maxPendingEvents": 10000,
+    "memoryLimitBytes": 104857600,
+    "cpuThrottleThreshold": 0.8
+  },
+
+  "security": {
+    "allowedBasePaths": [
+      "/Users/Alchemy/Projects",
+      "/Users/Alchemy/Documents"
+    ],
+    "blockedPaths": [
+      "/etc",
+      "/var",
+      "/usr",
+      "/bin",
+      "/sbin",
+      "/root",
+      "/System",
+      "/Library",
+      "/private"
+    ],
+    "detectPathTraversal": true,
+    "logSecurityEvents": true,
+    "maxSymlinkDepth": 10,
+    "blockedExtensions": [
+      ".exe",
+      ".dll",
+      ".so",
+      ".dylib",
+      ".bat",
+      ".cmd",
+      ".sh",
+      ".ps1"
+    ],
+    "clientRateLimit": 100
+  },
+
+  "persistence": {
+    "enabled": true,
+    "statePath": "/Users/Alchemy/Projects/experiments/RSES-Playground/data/watcher-state.json",
+    "saveIntervalMs": 60000,
+    "restoreOnStartup": true
+  },
+
+  "healthCheckIntervalMs": 30000,
+  "emitMetrics": true
+}

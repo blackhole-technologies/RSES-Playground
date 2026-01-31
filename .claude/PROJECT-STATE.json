@@ -1,201 +1,76 @@
 {
   "project": "RSES-Playground",
   "version": "2.0.0-alpha",
-  "lastUpdated": "2026-01-31T00:00:00Z",
-  "currentPhase": 0,
-  "status": "PLANNING_COMPLETE",
+  "lastUpdated": "2026-01-31T12:30:00Z",
+  "currentPhase": 8,
+  "status": "IN_PROGRESS",
 
   "phases": {
-    "1": {
-      "name": "Security Hardening",
+    "1": { "name": "Security Hardening", "status": "COMPLETE" },
+    "2": { "name": "Core Engine Improvements", "status": "COMPLETE" },
+    "3": { "name": "File System Integration", "status": "COMPLETE" },
+    "4": { "name": "UI/UX Improvements", "status": "COMPLETE" },
+    "5": { "name": "Prompting & Learning", "status": "COMPLETE" },
+    "6": { "name": "CMS Features", "status": "COMPLETE" },
+    "7": { "name": "Production Readiness", "status": "COMPLETE" },
+    "8": {
+      "name": "Connect Backend to Frontend",
       "status": "NOT_STARTED",
-      "tokenBudget": 140000,
-      "tokensUsed": 0,
+      "description": "Make Workbench buttons functional by connecting to existing APIs",
       "tasks": {
-        "1.1.1": { "status": "pending", "agent": "SGT", "validator": "SEC", "desc": "Safe Boolean parser" },
-        "1.1.2": { "status": "pending", "agent": "SEC", "validator": "SYS", "desc": "Passport authentication" },
-        "1.1.3": { "status": "pending", "agent": "SEC", "validator": "UI", "desc": "CSRF protection" },
-        "1.1.4": { "status": "pending", "agent": "SEC", "validator": "SGT", "desc": "Block path traversal" },
-        "1.1.5": { "status": "pending", "agent": "SEC", "validator": "CMS", "desc": "Input size limits" },
-        "1.1.6": { "status": "pending", "agent": "SEC", "validator": "SYS", "desc": "Rate limiting" },
-        "1.1.7": { "status": "pending", "agent": "SEC", "validator": "SYS", "desc": "Security headers" },
-        "1.1.8": { "status": "pending", "agent": "SEC", "validator": "ALL", "desc": "Security test suite" }
-      },
-      "qualityGates": {
-        "G1.1": { "passed": false, "criteria": "Zero new Function() calls" },
-        "G1.2": { "passed": false, "criteria": "All endpoints require auth" },
-        "G1.3": { "passed": false, "criteria": "OWASP Top 10 addressed" },
-        "G1.4": { "passed": false, "criteria": "Rate limiting tested" },
-        "G1.5": { "passed": false, "criteria": "Security tests pass 100%" }
+        "8.1.1": { "status": "pending", "desc": "Create /api/workbench/autolink endpoint" },
+        "8.1.2": { "status": "pending", "desc": "Create useAutolinkProject() hook" },
+        "8.1.3": { "status": "pending", "desc": "Connect Workbench buttons to real APIs" },
+        "8.1.4": { "status": "pending", "desc": "Add WebSocket listeners for real-time updates" }
       }
     },
-    "2": {
-      "name": "Core Engine Improvements",
+    "9": {
+      "name": "Quantum Desktop UI",
       "status": "NOT_STARTED",
-      "tokenBudget": 105000,
-      "tokensUsed": 0,
-      "tasks": {
-        "2.1.1": { "status": "pending", "agent": "SGT", "validator": "ARC", "desc": "Cycle detection" },
-        "2.1.2": { "status": "pending", "agent": "SGT", "validator": "SEC", "desc": "Symbol namespacing" },
-        "2.1.3": { "status": "pending", "agent": "SGT", "validator": "SYS", "desc": "Regex cache" },
-        "2.1.4": { "status": "pending", "agent": "SEC", "validator": "SGT", "desc": "ReDoS detection" },
-        "2.1.5": { "status": "pending", "agent": "SGT", "validator": "SYS", "desc": "Expression cache" },
-        "2.1.6": { "status": "pending", "agent": "CMS", "validator": "SYS", "desc": "API pagination" },
-        "2.1.7": { "status": "pending", "agent": "SYS", "validator": "SGT", "desc": "Performance tests" }
-      },
-      "qualityGates": {
-        "G2.1": { "passed": false, "criteria": "Cyclic configs rejected" },
-        "G2.2": { "passed": false, "criteria": "No symbol collisions" },
-        "G2.3": { "passed": false, "criteria": "Regex cache >90% hit rate" },
-        "G2.4": { "passed": false, "criteria": "No ReDoS patterns pass" },
-        "G2.5": { "passed": false, "criteria": "Pagination <50ms for 1000+" }
-      }
+      "description": "Port quantum-os-v20.html to React components",
+      "sourceFile": "/Users/Alchemy/Projects/by-ai/claude/quantum/quantum_os/quantum-os-v20.html"
     },
-    "3": {
-      "name": "File System Integration",
+    "10": {
+      "name": "RSES Search Integration",
       "status": "NOT_STARTED",
-      "tokenBudget": 175000,
-      "tokensUsed": 0,
-      "tasks": {
-        "3.1.1": { "status": "pending", "agent": "FW", "validator": "SYS", "desc": "WebSocket server" },
-        "3.1.2": { "status": "pending", "agent": "FW", "validator": "SYS", "desc": "Chokidar watcher" },
-        "3.1.3": { "status": "pending", "agent": "ALK", "validator": "ARC", "desc": "Project scanner" },
-        "3.1.4": { "status": "pending", "agent": "ALK", "validator": "SEC", "desc": "Symlink executor" },
-        "3.1.5": { "status": "pending", "agent": "ALK", "validator": "SEC", "desc": "Skip patterns" },
-        "3.1.6": { "status": "pending", "agent": "UI", "validator": "FW", "desc": "Client WebSocket" },
-        "3.1.7": { "status": "pending", "agent": "ALK", "validator": "SYS", "desc": "Shell bridge API" },
-        "3.1.8": { "status": "pending", "agent": "SYS", "validator": "ALL", "desc": "Integration tests" }
-      },
-      "qualityGates": {
-        "G3.1": { "passed": false, "criteria": "WebSocket reconnects <5s" },
-        "G3.2": { "passed": false, "criteria": "Events debounced 2s" },
-        "G3.3": { "passed": false, "criteria": "Scanner excludes patterns" },
-        "G3.4": { "passed": false, "criteria": "Atomic symlinks + rollback" },
-        "G3.5": { "passed": false, "criteria": "No boundary escapes" },
-        "G3.6": { "passed": false, "criteria": "UI updates <500ms" }
-      }
+      "description": "Finder-like search using RSES rules and symlink smart folders"
     },
-    "4": {
-      "name": "UI/UX Improvements",
+    "11": {
+      "name": "Full CMS Features",
       "status": "NOT_STARTED",
-      "tokenBudget": 123000,
-      "tokensUsed": 0,
-      "tasks": {
-        "4.1.1": { "status": "pending", "agent": "UI", "validator": "UX", "desc": "Extract hooks, Error Boundaries" },
-        "4.1.2": { "status": "pending", "agent": "UI", "validator": "SYS", "desc": "Remove unused assets" },
-        "4.1.3": { "status": "pending", "agent": "UI", "validator": "UX", "desc": "Keyboard shortcuts" },
-        "4.1.4": { "status": "pending", "agent": "UI", "validator": "PRV", "desc": "Monaco + RSES syntax" },
-        "4.1.5": { "status": "pending", "agent": "UX", "validator": "UI", "desc": "Tab rename, sync path" },
-        "4.1.6": { "status": "pending", "agent": "UX", "validator": "UI", "desc": "Unsaved warning" },
-        "4.1.7": { "status": "pending", "agent": "UI", "validator": "UX", "desc": "Accessibility" },
-        "4.1.8": { "status": "pending", "agent": "UX", "validator": "UI", "desc": "UI/UX test suite" }
-      },
-      "qualityGates": {
-        "G4.1": { "passed": false, "criteria": "Zero duplicate hooks" },
-        "G4.2": { "passed": false, "criteria": "Error Boundary catches all" },
-        "G4.3": { "passed": false, "criteria": "Lighthouse a11y >90" },
-        "G4.4": { "passed": false, "criteria": "Shortcuts documented" },
-        "G4.5": { "passed": false, "criteria": "Monaco syntax 100%" },
-        "G4.6": { "passed": false, "criteria": "Unsaved changes protected" }
-      }
-    },
-    "5": {
-      "name": "Prompting & Learning",
-      "status": "NOT_STARTED",
-      "tokenBudget": 87000,
-      "tokensUsed": 0,
-      "tasks": {
-        "5.1.1": { "status": "pending", "agent": "SGT", "validator": "PRM", "desc": "Unknown category detection" },
-        "5.1.2": { "status": "pending", "agent": "UX", "validator": "UI", "desc": "Prompting dialog" },
-        "5.1.3": { "status": "pending", "agent": "CMS", "validator": "SYS", "desc": "Learning persistence" },
-        "5.1.4": { "status": "pending", "agent": "PRM", "validator": "UX", "desc": "Error message redesign" },
-        "5.1.5": { "status": "pending", "agent": "PRM", "validator": "UI", "desc": "Contextual help" },
-        "5.1.6": { "status": "pending", "agent": "UX", "validator": "PRM", "desc": "Onboarding flow" }
-      },
-      "qualityGates": {
-        "G5.1": { "passed": false, "criteria": "Unknown triggers prompt 100%" },
-        "G5.2": { "passed": false, "criteria": "Suggestions relevant >80%" },
-        "G5.3": { "passed": false, "criteria": "Learning persists" },
-        "G5.4": { "passed": false, "criteria": "Errors have fixes" },
-        "G5.5": { "passed": false, "criteria": "Onboarding >70% completion" }
-      }
-    },
-    "6": {
-      "name": "CMS Features",
-      "status": "NOT_STARTED",
-      "tokenBudget": 105000,
-      "tokensUsed": 0,
-      "tasks": {
-        "6.1.1": { "status": "pending", "agent": "CMS", "validator": "ARC", "desc": "Projects API" },
-        "6.1.2": { "status": "pending", "agent": "CMS", "validator": "UI", "desc": "Dashboard" },
-        "6.1.3": { "status": "pending", "agent": "CMS", "validator": "SYS", "desc": "Config versioning" },
-        "6.1.4": { "status": "pending", "agent": "CMS", "validator": "SEC", "desc": "Batch operations" },
-        "6.1.5": { "status": "pending", "agent": "CMS", "validator": "UX", "desc": "Activity timeline" },
-        "6.1.6": { "status": "pending", "agent": "CMS", "validator": "SYS", "desc": "CMS test suite" }
-      },
-      "qualityGates": {
-        "G6.1": { "passed": false, "criteria": "Scan 500 projects <5s" },
-        "G6.2": { "passed": false, "criteria": "Dashboard renders <1s" },
-        "G6.3": { "passed": false, "criteria": "Version history preserved" },
-        "G6.4": { "passed": false, "criteria": "Batch 100+ items" },
-        "G6.5": { "passed": false, "criteria": "Timeline queryable" }
-      }
-    },
-    "7": {
-      "name": "Production Readiness",
-      "status": "NOT_STARTED",
-      "tokenBudget": 70000,
-      "tokensUsed": 0,
-      "tasks": {
-        "7.1.1": { "status": "pending", "agent": "SYS", "validator": "SEC", "desc": "Health checks" },
-        "7.1.2": { "status": "pending", "agent": "SYS", "validator": "SEC", "desc": "Structured logging" },
-        "7.1.3": { "status": "pending", "agent": "SYS", "validator": "CMS", "desc": "Prometheus metrics" },
-        "7.1.4": { "status": "pending", "agent": "SYS", "validator": "ALK", "desc": "Job queue" },
-        "7.1.5": { "status": "pending", "agent": "SYS", "validator": "SEC", "desc": "DB resilience" },
-        "7.1.6": { "status": "pending", "agent": "SYS", "validator": "ALL", "desc": "Deployment docs" }
-      },
-      "qualityGates": {
-        "G7.1": { "passed": false, "criteria": "Health <100ms" },
-        "G7.2": { "passed": false, "criteria": "Logs structured JSON" },
-        "G7.3": { "passed": false, "criteria": "Metrics Prometheus-compatible" },
-        "G7.4": { "passed": false, "criteria": "Queue handles 1000 items" },
-        "G7.5": { "passed": false, "criteria": "DB recovers <30s" },
-        "G7.6": { "passed": false, "criteria": "Deployment documented" }
-      }
+      "description": "File upload, folder creation, media management"
     }
   },
 
-  "agentDefinitions": {
-    "SEC": "/Users/Alchemy/Projects/agents/security-specialist.md",
-    "SYS": "/Users/Alchemy/Projects/agents/systems-analyst.md",
-    "UI": "/Users/Alchemy/Projects/agents/ui-development-expert.md",
-    "UX": "/Users/Alchemy/Projects/agents/ux-design-expert.md",
-    "CMS": "/Users/Alchemy/Projects/agents/cms-developer.md",
-    "FW": "/Users/Alchemy/Projects/agents/file-watcher-specialist.md",
-    "PRV": "/Users/Alchemy/Projects/agents/preview-generator.md",
-    "ARC": "/Users/Alchemy/Projects/agents/project-architect.md",
-    "SGT": "/Users/Alchemy/Projects/agents/set-graph-theorist.md",
-    "ALK": "/Users/Alchemy/Projects/agents/auto-link-developer.md",
-    "PRM": "/Users/Alchemy/Projects/agents/prompting-expert.md"
+  "testSummary": {
+    "total": 399,
+    "security": 130,
+    "engine": 77,
+    "integration": 20,
+    "ui": 35,
+    "prompting": 27,
+    "cms": 79,
+    "production": 31
+  },
+
+  "criticalDiscovery": {
+    "issue": "Phases 1-7 built backend only, not the intended CMS UI",
+    "expected": "Full desktop CMS based on quantum-os-v20.html",
+    "actual": "Basic config editor with mocked buttons",
+    "resolution": "Phases 8-11 will implement the actual CMS"
+  },
+
+  "expertAgents": {
+    "location": "~/Projects/agents/",
+    "count": 11,
+    "key": ["cms-developer.md", "ui-development-expert.md", "project-architect.md"]
   },
 
   "keyFiles": {
-    "plan": "/Users/Alchemy/Projects/experiments/RSES-Playground/IMPLEMENTATION-PLAN.md",
-    "state": "/Users/Alchemy/Projects/experiments/RSES-Playground/.claude/PROJECT-STATE.json",
-    "resumePrompt": "/Users/Alchemy/Projects/experiments/RSES-Playground/.claude/RESUME-PROMPT.md"
-  },
-
-  "analysisReports": {
-    "security": "Completed 2026-01-31 - 1 critical, 3 high, 3 medium, 4 low issues",
-    "systems": "Completed 2026-01-31 - Architecture sound, missing FS integration",
-    "ui": "Completed 2026-01-31 - Score 7/10, needs Error Boundaries",
-    "ux": "Completed 2026-01-31 - Score 3.1/5, needs keyboard shortcuts",
-    "cms": "Completed 2026-01-31 - Preview only, no execution",
-    "fileWatcher": "Completed 2026-01-31 - Not implemented, need chokidar+WS",
-    "preview": "Completed 2026-01-31 - No syntax highlighting, no caching",
-    "architecture": "Completed 2026-01-31 - Good foundation, needs lifecycle mgmt",
-    "formal": "Completed 2026-01-31 - No cycle detection, symbol collision risk",
-    "autoLink": "Completed 2026-01-31 - Preview only, recommend hybrid approach",
-    "prompting": "Completed 2026-01-31 - No unknown category prompting"
+    "state": ".claude/PROJECT-STATE.json",
+    "resumePrompt": "HANDOFF-PHASE-8.md",
+    "targetUI": "/Users/Alchemy/Projects/by-ai/claude/quantum/quantum_os/quantum-os-v20.html",
+    "currentWorkbench": "client/src/components/workbench/Workbench.tsx",
+    "bridgeAPI": "server/routes/bridge.ts"
   }
 }

@@ -1,5 +1,6 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { usePreview, type PreviewResult } from "@/hooks/use-preview";
+import { useAutolinkProject, type AutolinkResponse } from "@/hooks/use-autolink";
 import { cn } from "@/lib/utils";
 import "./workbench.css";
 
@@ -63,10 +64,12 @@ export function Workbench({ configContent, parsedConfig }: WorkbenchProps) {
   const [inputValue, setInputValue] = useState("");
 
   const previewMutation = usePreview();
+  const autolinkMutation = useAutolinkProject();
   const debouncedConfig = useDebounceValue(configContent, 500);
   const debouncedPath = useDebounceValue(testPath, 300);
 
   const [previewResult, setPreviewResult] = useState<PreviewResult | null>(null);
+  const [lastAutolinkResult, setLastAutolinkResult] = useState<AutolinkResponse | null>(null);
 
   // Auto-trigger preview
   useEffect(() => {
@@ -117,23 +120,59 @@ export function Workbench({ configContent, parsedConfig }: WorkbenchProps) {
   }, [parsedConfig]);
 
   // Action handlers
-  const addMessage = (type: 'user' | 'system', text: string) => {
+  const addMessage = useCallback((type: 'user' | 'system', text: string) => {
     setMessages(prev => [...prev, { type, text }]);
-  };
+  }, []);
 
-  const handleAction = (action: string) => {
+  const handleAutolink = useCallback(async (dryRun = false) => {
+    if (!configContent) {
+      addMessage('system', 'Error: No config content available');
+      return;
+    }
+
+    addMessage('user', dryRun ? '[Preview Autolink]' : '[Autolink]');
+
+    try {
+      const result = await autolinkMutation.mutateAsync({
+        projectPath: testPath,
+        configContent,
+        dryRun,
+      });
+
+      setLastAutolinkResult(result);
+
+      if (result.success) {
+        const createdCount = result.symlinks.filter(s => s.created || dryRun).length;
+        if (createdCount > 0) {
+          addMessage('system', `${dryRun ? 'Would create' : 'Created'} ${createdCount} symlink(s) for ${result.projectName}:`);
+          result.symlinks.forEach(link => {
+            if (link.created || dryRun) {
+              addMessage('system', `  -> ${link.category}`);
+            }
+          });
+        } else {
+          addMessage('system', `No symlinks ${dryRun ? 'would be' : 'were'} created (no matching rules)`);
+        }
+
+        if (result.classification.sets.length > 0) {
+          addMessage('system', `Matched sets: ${result.classification.sets.map(s => `$${s}`).join(', ')}`);
+        }
+      } else {
+        addMessage('system', `Autolink failed: ${result.errors?.join(', ') || 'Unknown error'}`);
+      }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+      addMessage('system', `Error: ${errorMsg}`);
+    }
+  }, [configContent, testPath, autolinkMutation, addMessage]);
+
+  const handleAction = useCallback((action: string) => {
     switch (action) {
       case 'autolink':
-        addMessage('user', '[Autolink]');
-        if (previewResult && previewResult.symlinks.length > 0) {
-          addMessage('system', `Autolink: Generated ${previewResult.symlinks.length} symlink(s) for ${projectName}`);
-        } else {
-          addMessage('system', 'Autolink: No symlinks generated (no matching rules)');
-        }
+        handleAutolink(false);
         break;
       case 'preview':
-        addMessage('user', '[Preview]');
-        addMessage('system', `Preview: ${previewResult?.symlinks.length || 0} symlinks would be created`);
+        handleAutolink(true);
         break;
       case 'new-folder':
         if (inputValue) {
@@ -173,7 +212,7 @@ export function Workbench({ configContent, parsedConfig }: WorkbenchProps) {
         }
         break;
     }
-  };
+  }, [inputValue, evalExpr, previewResult, addMessage, handleAutolink]);
 
   return (
     <div className="workbench">
@@ -340,10 +379,28 @@ export function Workbench({ configContent, parsedConfig }: WorkbenchProps) {
           <button className="wb-button" onClick={() => handleAction('rename')}>Rename</button>
         </div>
         <div className="wb-action-group">
-          <button className="wb-button wb-primary" onClick={() => handleAction('autolink')}>Autolink</button>
-          <button className="wb-button" onClick={() => handleAction('preview')}>Preview</button>
+          <button
+            className="wb-button wb-primary"
+            onClick={() => handleAction('autolink')}
+            disabled={autolinkMutation.isPending}
+          >
+            {autolinkMutation.isPending ? 'Linking...' : 'Autolink'}
+          </button>
+          <button
+            className="wb-button"
+            onClick={() => handleAction('preview')}
+            disabled={autolinkMutation.isPending}
+          >
+            Preview
+          </button>
         </div>
-        <p className="wb-note">Autolink runs <code>rses link</code> to create symlinks based on rules.</p>
+        <p className="wb-note">Autolink creates symlinks in <code>~/search-results/</code> based on RSES rules.</p>
+        {lastAutolinkResult && (
+          <p className="wb-note wb-success">
+            Last autolink: {lastAutolinkResult.symlinks.filter(s => s.created).length} symlinks created
+            for {lastAutolinkResult.projectName}
+          </p>
+        )}
       </section>
 
       {/* INPUT */}
