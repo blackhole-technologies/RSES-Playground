@@ -1,8 +1,8 @@
-# Phase 3 Kernel UI Improvements - Handoff Document
+# Phase 3 Kernel UI & Route Migration - Handoff Document
 
 **Date:** 2026-02-01
-**Status:** PARTIAL COMPLETE (2 of 5 items)
-**Context Window:** Started at 25k tokens, time-boxed session
+**Status:** COMPLETE (3 of 5 high-priority items)
+**Context Window:** Started at 25k tokens
 
 ---
 
@@ -59,6 +59,37 @@ Implementation in `ModuleList` component (lines ~270-330):
 - Added `useToast` hook
 - Added `onSuccess` and `onError` callbacks to mutation calls
 
+### 4. Content Module Route Migration
+**File:** `server/modules/content/index.ts` (~500 lines)
+
+Migrated all `/api/configs/*` route logic into the content module:
+
+**ContentService class** provides:
+- `listConfigs()` - Paginated config listing
+- `getConfig()` / `createConfig()` / `updateConfig()` / `deleteConfig()` - CRUD
+- `getVersions()` / `getVersion()` / `restoreVersion()` - Version management
+- `getActivity()` / `getRecentActivity()` - Activity log access
+- `bulkDeleteConfigs()` / `bulkUpdateConfigs()` - Batch operations
+- Event emission on all write operations
+
+**Routes mounted at `/api/modules/content/*`:**
+- `GET /configs` - List configs (with pagination)
+- `GET /configs/:id` - Get single config
+- `POST /configs` - Create config
+- `PUT /configs/:id` - Update config
+- `DELETE /configs/:id` - Delete config
+- `GET /configs/:id/versions` - List versions
+- `GET /configs/:id/versions/:version` - Get version
+- `POST /configs/:id/versions/:version/restore` - Restore version
+- `GET /activity` - List activity
+- `GET /activity/recent` - Recent activity
+- `POST /configs/bulk-delete` - Bulk delete
+- `POST /configs/bulk-update` - Bulk update
+- `GET /health` - Module health
+- `GET /stats` - Config statistics
+
+**Note:** Legacy routes in `server/routes.ts` remain for backward compatibility.
+
 ---
 
 ## Files Changed
@@ -67,15 +98,15 @@ Implementation in `ModuleList` component (lines ~270-330):
 |------|--------|
 | `client/src/components/config-sidebar.tsx` | +14 lines (Link import, Settings icon, footer section) |
 | `client/src/pages/kernel-admin-page.tsx` | +40 lines (Link, ArrowLeft, useToast, toast callbacks, back button) |
+| `server/modules/content/index.ts` | Rewritten ~500 lines (full CRUD, versions, activity, batch routes) |
 
 ---
 
 ## Remaining Work (Phase 3+)
 
 ### Not Yet Done
-1. **Full content route migration** - Move `/api/configs/*` to content module (larger task)
-2. **Dependency graph visualization** - Visual display of module dependencies
-3. **Real-time event streaming** - WebSocket for live event updates
+1. **Dependency graph visualization** - Visual display of module dependencies
+2. **Real-time event streaming** - WebSocket for live event updates
 
 ### Lower Priority (Phase 4+)
 4. Module configuration UI - Edit module config through admin
@@ -88,16 +119,21 @@ Implementation in `ModuleList` component (lines ~270-330):
 ## Testing
 
 ```bash
-# Start server
+# Start server (without kernel - legacy routes)
 npm run dev
+curl -sk https://localhost:5000/api/configs
 
-# Access pages
-open https://localhost:5000/editor         # See "Kernel Admin" link in sidebar footer
-open https://localhost:5000/admin/kernel   # See "Editor" back link in header
-
-# Test with kernel enabled
+# Start server (with kernel - module routes)
 ENABLE_KERNEL=true npm run dev
-# Toggle modules via switches, observe toast notifications
+
+# Test content module routes
+curl -sk https://localhost:5000/api/modules/content/health
+curl -sk https://localhost:5000/api/modules/content/configs
+curl -sk https://localhost:5000/api/modules/content/stats
+
+# UI testing
+open https://localhost:5000/editor         # See "Kernel Admin" link in sidebar footer
+open https://localhost:5000/admin/kernel   # See "Editor" back link + toast notifications
 ```
 
 ---
@@ -107,25 +143,25 @@ ENABLE_KERNEL=true npm run dev
 ```
 Continue Phase 3 of the RSES CMS project. Read docs/HANDOFF-PHASE-3-UI.md for context.
 
-Completed in this session:
+Completed:
 - Navigation link from sidebar to /admin/kernel
 - Back link from kernel admin to /editor
 - Toast notifications on module enable/disable
+- Content module route migration (all config CRUD, versions, activity, batch)
 
-Remaining Phase 3 work:
-1. Migrate /api/configs/* routes to content module
-2. Dependency graph visualization
-3. Real-time event streaming via WebSocket
+Remaining work:
+1. Dependency graph visualization - Add visual module dependency display
+2. Real-time event streaming - WebSocket for live kernel events
 
 Key files:
-- server/modules/content/index.ts - Content module (add routes here)
-- server/routes.ts - Current config routes (migrate from here)
+- server/modules/content/index.ts - Content module with routes
 - client/src/pages/kernel-admin-page.tsx - Add dependency graph component
 - server/ws/ - WebSocket infrastructure for event streaming
+- server/kernel/events.ts - Event bus for streaming
 ```
 
 ---
 
 *Handoff created: 2026-02-01*
-*Lines added: ~54*
-*Status: PHASE 3 IN PROGRESS*
+*Lines changed: ~550*
+*Status: PHASE 3 MOSTLY COMPLETE*

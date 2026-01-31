@@ -5,39 +5,15 @@
  * This is a CORE tier module that provides content management services.
  * It handles RSES configurations storage, versioning, and retrieval.
  *
+ * Routes mounted at: /api/modules/content/*
+ *
  * @module modules/content
  * @tier core
- * @phase Phase 1 - Foundation Infrastructure
+ * @phase Phase 3 - Route Migration
  * @created 2026-02-01
- *
- * @architecture
- * ```
- * ┌─────────────────────────────────────────────────────────────────────┐
- * │                     CONTENT MODULE                                   │
- * ├─────────────────────────────────────────────────────────────────────┤
- * │                                                                      │
- * │  ┌──────────────────┐  ┌──────────────────┐  ┌─────────────────┐   │
- * │  │  ConfigService   │  │  VersionService  │  │   Validation    │   │
- * │  │  - create        │  │  - getVersions   │  │   - validate    │   │
- * │  │  - update        │  │  - restore       │  │   - test        │   │
- * │  │  - delete        │  │  - compare       │  │   - preview     │   │
- * │  │  - list/get      │  └──────────────────┘  └─────────────────┘   │
- * │  └──────────────────┘                                               │
- * │                                                                      │
- * │  Events Emitted:                                                     │
- * │  - content:created    - New config created                          │
- * │  - content:updated    - Config updated                              │
- * │  - content:deleted    - Config deleted                              │
- * │  - content:validated  - Config validation performed                 │
- * │                                                                      │
- * │  Services Registered:                                                │
- * │  - ContentService     - Main content management service             │
- * │                                                                      │
- * └─────────────────────────────────────────────────────────────────────┘
- * ```
  */
 
-import { Router, type Request, type Response, type NextFunction } from "express";
+import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import type {
   IModule,
@@ -47,6 +23,13 @@ import type {
   IEventBus,
   IContainer,
 } from "../../kernel/types";
+import {
+  storage,
+  versionStorage,
+  activityStorage,
+  type PaginationOptions,
+} from "../../storage";
+import { api, versionsApi, activityApi, batchApi } from "@shared/routes";
 
 // =============================================================================
 // CONTENT SERVICE
@@ -54,9 +37,6 @@ import type {
 
 /**
  * Content service providing RSES configuration management.
- *
- * This is a placeholder implementation that will be expanded to wrap
- * the existing routes.ts functionality.
  */
 export class ContentService {
   private events: IEventBus;
@@ -67,45 +47,211 @@ export class ContentService {
     this.container = container;
   }
 
-  /**
-   * Emit a content creation event.
-   */
-  async notifyCreated(configId: number, name: string, userId?: number) {
+  // === Config CRUD ===
+
+  async listConfigs(options?: PaginationOptions & { paginated?: boolean }) {
+    if (options?.paginated || options?.page || options?.limit) {
+      return storage.getConfigsPaginated(options);
+    }
+    return storage.getConfigs();
+  }
+
+  async getConfig(id: number) {
+    return storage.getConfig(id);
+  }
+
+  async createConfig(input: { name: string; content: string; description?: string }, userId?: number) {
+    const config = await storage.createConfig(input);
+
+    // Create initial version
+    await versionStorage.createVersion({
+      configId: config.id,
+      content: config.content,
+      description: "Initial version",
+    });
+
+    // Log activity
+    await activityStorage.logActivity({
+      action: "config.created",
+      entityType: "config",
+      entityId: config.id,
+      userId,
+      metadata: { name: config.name },
+    });
+
+    // Emit event
     await this.events.emit("content:created", {
-      configId,
-      name,
+      configId: config.id,
+      name: config.name,
       userId,
       timestamp: new Date(),
     });
+
+    return config;
   }
 
-  /**
-   * Emit a content update event.
-   */
-  async notifyUpdated(configId: number, name: string, userId?: number) {
+  async updateConfig(
+    id: number,
+    input: { name?: string; content?: string; description?: string },
+    userId?: number
+  ) {
+    const existing = await storage.getConfig(id);
+    if (!existing) return null;
+
+    const config = await storage.updateConfig(id, input);
+    if (!config) return null;
+
+    // Create new version if content changed
+    if (input.content && input.content !== existing.content) {
+      await versionStorage.createVersion({
+        configId: config.id,
+        content: config.content,
+        description: input.description || undefined,
+      });
+    }
+
+    // Log activity
+    await activityStorage.logActivity({
+      action: "config.updated",
+      entityType: "config",
+      entityId: config.id,
+      userId,
+      metadata: { updates: Object.keys(input) },
+    });
+
+    // Emit event
     await this.events.emit("content:updated", {
-      configId,
-      name,
+      configId: config.id,
+      name: config.name,
       userId,
       timestamp: new Date(),
     });
+
+    return config;
   }
 
-  /**
-   * Emit a content deletion event.
-   */
-  async notifyDeleted(configId: number, name: string, userId?: number) {
-    await this.events.emit("content:deleted", {
-      configId,
-      name,
+  async deleteConfig(id: number, userId?: number) {
+    const config = await storage.getConfig(id);
+
+    // Log activity before deletion
+    await activityStorage.logActivity({
+      action: "config.deleted",
+      entityType: "config",
+      entityId: id,
       userId,
-      timestamp: new Date(),
     });
+
+    await storage.deleteConfig(id);
+
+    // Emit event
+    if (config) {
+      await this.events.emit("content:deleted", {
+        configId: id,
+        name: config.name,
+        userId,
+        timestamp: new Date(),
+      });
+    }
   }
 
-  /**
-   * Emit a validation event.
-   */
+  // === Version Operations ===
+
+  async getVersions(configId: number) {
+    return versionStorage.getVersions(configId);
+  }
+
+  async getVersion(configId: number, version: number) {
+    return versionStorage.getVersion(configId, version);
+  }
+
+  async restoreVersion(configId: number, versionNum: number, userId?: number) {
+    const version = await versionStorage.getVersion(configId, versionNum);
+    if (!version) return null;
+
+    // Update config with version content
+    const config = await storage.updateConfig(configId, {
+      content: version.content,
+    });
+
+    // Create new version for restore action
+    await versionStorage.createVersion({
+      configId,
+      content: version.content,
+      description: `Restored from version ${versionNum}`,
+    });
+
+    // Log activity
+    await activityStorage.logActivity({
+      action: "config.restored",
+      entityType: "config",
+      entityId: configId,
+      userId,
+      metadata: { fromVersion: versionNum },
+    });
+
+    return config;
+  }
+
+  // === Activity Operations ===
+
+  async getActivity(filter?: {
+    entityType?: string;
+    startDate?: Date;
+    endDate?: Date;
+  }, options?: PaginationOptions) {
+    return activityStorage.getActivity(filter, options);
+  }
+
+  async getRecentActivity(limit?: number) {
+    return activityStorage.getRecentActivity(limit);
+  }
+
+  // === Batch Operations ===
+
+  async bulkDeleteConfigs(ids: number[], userId?: number) {
+    let deleted = 0;
+    for (const id of ids) {
+      try {
+        await storage.deleteConfig(id);
+        deleted++;
+      } catch {
+        // Continue with other deletions
+      }
+    }
+
+    await activityStorage.logActivity({
+      action: "configs.bulk-deleted",
+      entityType: "config",
+      userId,
+      metadata: { ids, deleted },
+    });
+
+    return { deleted };
+  }
+
+  async bulkUpdateConfigs(ids: number[], updates: { name?: string; content?: string; description?: string }, userId?: number) {
+    let updated = 0;
+    for (const id of ids) {
+      try {
+        await storage.updateConfig(id, updates);
+        updated++;
+      } catch {
+        // Continue with other updates
+      }
+    }
+
+    await activityStorage.logActivity({
+      action: "configs.bulk-updated",
+      entityType: "config",
+      userId,
+      metadata: { ids, updated, updates: Object.keys(updates) },
+    });
+
+    return { updated };
+  }
+
+  // === Event Notifications (for external use) ===
+
   async notifyValidated(configId: number | null, isValid: boolean, errorCount: number) {
     await this.events.emit("content:validated", {
       configId,
@@ -122,18 +268,6 @@ export class ContentService {
 
 /**
  * Content Module - Core tier module for RSES configuration management.
- *
- * This module provides:
- * - RSES configuration CRUD operations
- * - Version history and restoration
- * - Configuration validation and testing
- *
- * @example
- * ```typescript
- * // Other modules can resolve content services
- * const contentService = container.resolve<ContentService>("ContentService");
- * await contentService.notifyUpdated(123, "my-config", userId);
- * ```
  */
 export class ContentModule implements IModule {
   public readonly manifest: ModuleManifest = {
@@ -176,7 +310,7 @@ export class ContentModule implements IModule {
     exports: ["ContentService"],
     events: {
       emits: ["content:created", "content:updated", "content:deleted", "content:validated"],
-      listens: ["auth:login"], // Could use this to track user activity
+      listens: ["auth:login"],
     },
     tags: ["content", "rses", "core"],
   };
@@ -212,13 +346,13 @@ export class ContentModule implements IModule {
 
   /**
    * Set up content routes.
-   *
-   * Note: The actual content routes are still in server/routes.ts.
-   * This module provides the event emission and service layer.
-   * Full migration will move routes here.
+   * Routes are mounted at /api/modules/content/*
    */
   private setupRoutes(router: Router, logger: any): void {
-    // GET /health - Module health endpoint
+    const service = this.contentService!;
+
+    // === Health & Stats ===
+
     router.get("/health", (req: Request, res: Response) => {
       res.json({
         module: "content",
@@ -227,15 +361,229 @@ export class ContentModule implements IModule {
       });
     });
 
-    // GET /stats - Content statistics (placeholder)
     router.get("/stats", async (req: Request, res: Response) => {
-      // This would query the database for stats
-      res.json({
-        totalConfigs: 0,
-        totalVersions: 0,
-        lastUpdated: null,
-      });
+      try {
+        const total = await storage.countConfigs();
+        res.json({
+          totalConfigs: total,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (err) {
+        logger.error({ err }, "Failed to get stats");
+        res.status(500).json({ message: "Failed to get stats" });
+      }
     });
+
+    // === Config CRUD ===
+
+    // GET /configs - List configs
+    router.get("/configs", async (req: Request, res: Response) => {
+      try {
+        const page = parseInt(req.query.page as string) || 1;
+        const limit = parseInt(req.query.limit as string) || 50;
+        const paginated = req.query.paginated === "true";
+
+        const result = await service.listConfigs({ page, limit, paginated });
+        res.json(result);
+      } catch (err) {
+        logger.error({ err }, "Failed to list configs");
+        res.status(500).json({ message: "Failed to list configs" });
+      }
+    });
+
+    // GET /configs/:id - Get single config
+    router.get("/configs/:id", async (req: Request, res: Response) => {
+      try {
+        const config = await service.getConfig(Number(req.params.id));
+        if (!config) {
+          return res.status(404).json({ message: "Config not found" });
+        }
+        res.json(config);
+      } catch (err) {
+        logger.error({ err }, "Failed to get config");
+        res.status(500).json({ message: "Failed to get config" });
+      }
+    });
+
+    // POST /configs - Create config (requires auth via middleware)
+    router.post("/configs", async (req: Request, res: Response) => {
+      try {
+        const input = api.configs.create.input.parse(req.body);
+        const userId = (req as any).user?.id;
+        const config = await service.createConfig(input, userId);
+        res.status(201).json(config);
+      } catch (err) {
+        if (err instanceof z.ZodError) {
+          return res.status(400).json({
+            message: err.errors[0].message,
+            field: err.errors[0].path.join("."),
+          });
+        }
+        logger.error({ err }, "Failed to create config");
+        res.status(500).json({ message: "Failed to create config" });
+      }
+    });
+
+    // PUT /configs/:id - Update config (requires auth via middleware)
+    router.put("/configs/:id", async (req: Request, res: Response) => {
+      try {
+        const input = api.configs.update.input.parse(req.body);
+        const userId = (req as any).user?.id;
+        const config = await service.updateConfig(Number(req.params.id), input, userId);
+        if (!config) {
+          return res.status(404).json({ message: "Config not found" });
+        }
+        res.json(config);
+      } catch (err) {
+        if (err instanceof z.ZodError) {
+          return res.status(400).json({
+            message: err.errors[0].message,
+            field: err.errors[0].path.join("."),
+          });
+        }
+        logger.error({ err }, "Failed to update config");
+        res.status(500).json({ message: "Failed to update config" });
+      }
+    });
+
+    // DELETE /configs/:id - Delete config (requires auth via middleware)
+    router.delete("/configs/:id", async (req: Request, res: Response) => {
+      try {
+        const userId = (req as any).user?.id;
+        await service.deleteConfig(Number(req.params.id), userId);
+        res.status(204).send();
+      } catch (err) {
+        logger.error({ err }, "Failed to delete config");
+        res.status(500).json({ message: "Failed to delete config" });
+      }
+    });
+
+    // === Version Routes ===
+
+    // GET /configs/:id/versions - List versions
+    router.get("/configs/:id/versions", async (req: Request, res: Response) => {
+      try {
+        const configId = Number(req.params.id);
+        const config = await service.getConfig(configId);
+        if (!config) {
+          return res.status(404).json({ message: "Config not found" });
+        }
+        const versions = await service.getVersions(configId);
+        res.json(versions);
+      } catch (err) {
+        logger.error({ err }, "Failed to list versions");
+        res.status(500).json({ message: "Failed to list versions" });
+      }
+    });
+
+    // GET /configs/:id/versions/:version - Get specific version
+    router.get("/configs/:id/versions/:version", async (req: Request, res: Response) => {
+      try {
+        const configId = Number(req.params.id);
+        const versionNum = Number(req.params.version);
+        const version = await service.getVersion(configId, versionNum);
+        if (!version) {
+          return res.status(404).json({ message: "Version not found" });
+        }
+        res.json(version);
+      } catch (err) {
+        logger.error({ err }, "Failed to get version");
+        res.status(500).json({ message: "Failed to get version" });
+      }
+    });
+
+    // POST /configs/:id/versions/:version/restore - Restore version
+    router.post("/configs/:id/versions/:version/restore", async (req: Request, res: Response) => {
+      try {
+        const configId = Number(req.params.id);
+        const versionNum = Number(req.params.version);
+        const userId = (req as any).user?.id;
+        const config = await service.restoreVersion(configId, versionNum, userId);
+        if (!config) {
+          return res.status(404).json({ message: "Version not found" });
+        }
+        res.json(config);
+      } catch (err) {
+        logger.error({ err }, "Failed to restore version");
+        res.status(500).json({ message: "Failed to restore version" });
+      }
+    });
+
+    // === Activity Routes ===
+
+    // GET /activity - List activity
+    router.get("/activity", async (req: Request, res: Response) => {
+      try {
+        const page = parseInt(req.query.page as string) || 1;
+        const limit = parseInt(req.query.limit as string) || 50;
+        const entityType = req.query.entityType as string | undefined;
+        const startDate = req.query.startDate ? new Date(req.query.startDate as string) : undefined;
+        const endDate = req.query.endDate ? new Date(req.query.endDate as string) : undefined;
+
+        const result = await service.getActivity(
+          { entityType, startDate, endDate },
+          { page, limit }
+        );
+        res.json(result);
+      } catch (err) {
+        logger.error({ err }, "Failed to list activity");
+        res.status(500).json({ message: "Failed to list activity" });
+      }
+    });
+
+    // GET /activity/recent - Recent activity
+    router.get("/activity/recent", async (req: Request, res: Response) => {
+      try {
+        const limit = parseInt(req.query.limit as string) || 20;
+        const activity = await service.getRecentActivity(limit);
+        res.json(activity);
+      } catch (err) {
+        logger.error({ err }, "Failed to get recent activity");
+        res.status(500).json({ message: "Failed to get recent activity" });
+      }
+    });
+
+    // === Batch Routes ===
+
+    // POST /configs/bulk-delete
+    router.post("/configs/bulk-delete", async (req: Request, res: Response) => {
+      try {
+        const input = batchApi.deleteConfigs.input.parse(req.body);
+        const userId = (req as any).user?.id;
+        const result = await service.bulkDeleteConfigs(input.ids, userId);
+        res.json(result);
+      } catch (err) {
+        if (err instanceof z.ZodError) {
+          return res.status(400).json({
+            message: err.errors[0].message,
+            field: err.errors[0].path.join("."),
+          });
+        }
+        logger.error({ err }, "Failed to bulk delete configs");
+        res.status(500).json({ message: "Failed to bulk delete configs" });
+      }
+    });
+
+    // POST /configs/bulk-update
+    router.post("/configs/bulk-update", async (req: Request, res: Response) => {
+      try {
+        const input = batchApi.updateConfigs.input.parse(req.body);
+        const userId = (req as any).user?.id;
+        const result = await service.bulkUpdateConfigs(input.ids, input.updates, userId);
+        res.json(result);
+      } catch (err) {
+        if (err instanceof z.ZodError) {
+          return res.status(400).json({
+            message: err.errors[0].message,
+            field: err.errors[0].path.join("."),
+          });
+        }
+        logger.error({ err }, "Failed to bulk update configs");
+        res.status(500).json({ message: "Failed to bulk update configs" });
+      }
+    });
+
+    logger.info("Content module routes registered");
   }
 
   /**
@@ -271,6 +619,9 @@ export class ContentModule implements IModule {
           message: "ContentService not initialized",
         };
       }
+
+      // Quick DB check
+      await storage.countConfigs();
 
       return {
         status: "healthy",
