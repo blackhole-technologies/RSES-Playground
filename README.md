@@ -1,51 +1,41 @@
-# RSES-Playground
+# RSES CMS
 
-A web-based development workbench for the **Rule-based Symlink Engine System (RSES)** - a configuration-driven framework for organizing AI-generated projects using symbolic links and multi-dimensional categorization.
+**Version**: 0.6.0 (Pre-Foundation)
+**Status**: Active Development
 
-## Overview
+A next-generation Content Management System combining quantum-ready taxonomy, AI-native design, and enterprise collaboration features.
 
-RSES-Playground provides an interactive environment for designing, validating, testing, and previewing RSES configurations before deploying them to organize your project directory.
+## Current State
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Kernel Module System | 90% | DI container, event bus, registry, gateway |
+| Admin UI | 40% | Module management, config editor, dependency graph |
+| Security | 25% | Architecture defined, P0 fixes applied |
+| CMS Features | 20% | Content types schema only |
+| Multi-Site | 0% | Not started |
+
+## Architecture
 
 ```
-~/Projects/
-├── by-ai/          # Source of truth (physical files)
-│   ├── claude/
-│   ├── chatgpt/
-│   └── gemini/
-├── by-topic/       # View layer (symlinks by topic)
-│   ├── quantum/
-│   ├── web-apps/
-│   └── tools/
-├── by-type/        # View layer (symlinks by type)
-│   ├── framework/
-│   ├── library/
-│   └── cli-tool/
-└── by-filetype/    # View layer (symlinks by extension)
+┌─────────────────────────────────────────────────────┐
+│                    Client (React)                    │
+├─────────────────────────────────────────────────────┤
+│  Kernel Admin UI │ Config Editor │ Event Monitor    │
+└─────────────────────────────────────────────────────┘
+                          │
+┌─────────────────────────────────────────────────────┐
+│                  Express Server                      │
+├─────────────────────────────────────────────────────┤
+│  API Gateway  │  Module Registry  │  Event Bus      │
+├─────────────────────────────────────────────────────┤
+│  DI Container │  Auth Middleware  │  Security       │
+└─────────────────────────────────────────────────────┘
+                          │
+┌─────────────────────────────────────────────────────┐
+│                   PostgreSQL                         │
+└─────────────────────────────────────────────────────┘
 ```
-
-## Features
-
-### Current (v1.0)
-- **Configuration Editor** - Edit RSES configs with real-time validation
-- **Match Testing** - Test filenames against rules to see categorization
-- **Symlink Preview** - Preview what symlinks would be created
-- **Workbench** - Interactive testing with expression evaluation
-
-### Planned (v2.0) - See [IMPLEMENTATION-PLAN.md](./IMPLEMENTATION-PLAN.md)
-- Real-time file watching with WebSocket updates
-- Actual symlink execution (not just preview)
-- Unknown category prompting with learning
-- Dashboard with statistics
-- Monaco editor with RSES syntax highlighting
-
-## Tech Stack
-
-| Layer | Technology |
-|-------|------------|
-| Frontend | React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui |
-| Backend | Express.js 5, TypeScript, Drizzle ORM |
-| Database | PostgreSQL |
-| Real-time | WebSocket (planned) |
 
 ## Quick Start
 
@@ -53,43 +43,11 @@ RSES-Playground provides an interactive environment for designing, validating, t
 # Install dependencies
 npm install
 
-# Set up database
-export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/rses_playground"
+# Setup database
 npm run db:push
 
 # Start development server
 npm run dev
-```
-
-Visit `http://localhost:5000`
-
-## RSES Configuration Format
-
-```ini
-[defaults]
-auto_topic = prefix
-auto_type = suffix
-delimiter = -
-
-[sets]
-quantum = quantum-*
-web = web-* | webapp-*
-tools = tool-*
-
-[sets.attributes]
-claude = {source = claude}
-
-[sets.compound]
-claude-quantum = $quantum & $claude
-
-[rules.topic]
-$quantum -> quantum
-$tools -> tools-and-utilities
-{source = *} -> ai/$source
-
-[rules.type]
-*-app -> application
-*-lib -> library
 ```
 
 ## Project Structure
@@ -97,62 +55,84 @@ $tools -> tools-and-utilities
 ```
 ├── client/                 # React frontend
 │   └── src/
-│       ├── components/     # UI components
-│       ├── hooks/          # React hooks
-│       └── pages/          # Page components
+│       ├── pages/          # Admin pages
+│       └── hooks/          # Kernel hooks
 ├── server/                 # Express backend
-│   ├── lib/rses.ts        # RSES parser engine
-│   └── routes.ts          # API endpoints
-├── shared/                 # Shared types
-├── .claude/               # Context survival files
-│   ├── PROJECT-STATE.json # Implementation state
-│   └── RESUME-PROMPT.md   # Context recovery
-└── IMPLEMENTATION-PLAN.md # 7-phase development plan
+│   ├── kernel/             # Module system core
+│   │   ├── container.ts    # DI container
+│   │   ├── events.ts       # Event bus
+│   │   ├── registry.ts     # Module registry
+│   │   ├── gateway.ts      # API gateway
+│   │   └── contracts/      # Future specs (CQRS, ports)
+│   ├── modules/            # Loadable modules
+│   ├── security/           # Security architecture
+│   └── middleware/         # Express middleware
+├── shared/                 # Shared types/schema
+└── docs/                   # Documentation
+    ├── plans/              # Master plans
+    ├── reviews/            # Expert agent reviews
+    ├── handoffs/           # Context handoffs
+    └── architecture/       # Architecture docs
 ```
 
-## Implementation Status
+## Documentation
 
-| Phase | Name | Status |
-|-------|------|--------|
-| 1 | Security Hardening | 🔲 Not Started |
-| 2 | Core Engine Improvements | 🔲 Not Started |
-| 3 | File System Integration | 🔲 Not Started |
-| 4 | UI/UX Improvements | 🔲 Not Started |
-| 5 | Prompting & Learning | 🔲 Not Started |
-| 6 | CMS Features | 🔲 Not Started |
-| 7 | Production Readiness | 🔲 Not Started |
-
-See [IMPLEMENTATION-PLAN.md](./IMPLEMENTATION-PLAN.md) for full details.
-
-## API Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/configs` | List all configurations |
-| POST | `/api/configs` | Create configuration |
-| PUT | `/api/configs/:id` | Update configuration |
-| DELETE | `/api/configs/:id` | Delete configuration |
-| POST | `/api/engine/validate` | Validate config syntax |
-| POST | `/api/engine/test` | Test filename matching |
-| POST | `/api/engine/preview` | Preview symlink generation |
+- [Master Plan](docs/plans/CMS-MASTER-PLAN-FINAL.md) - Authoritative implementation plan
+- [Consolidated Review](docs/reviews/CONSOLIDATED-REVIEW-v0.6.0.md) - Current state assessment
+- [Architecture](docs/architecture/RSES-CMS-ENTERPRISE-ARCHITECTURE.md) - System architecture
 
 ## Development
 
-```bash
-# Type checking
-npm run check
+### Kernel Admin
 
-# Database migrations
-npm run db:push
+Access at `/kernel-admin` - provides:
+- Module enable/disable
+- Configuration editing with persistence
+- Dependency graph visualization
+- Real-time event monitoring
 
-# Build for production
-npm run build
+### Module System
+
+Modules are self-contained units with:
+- Manifest (id, version, dependencies)
+- Lifecycle hooks (initialize, start, stop)
+- Optional config schema (Zod)
+- Optional routes
+
+```typescript
+// Example module structure
+export class MyModule implements IModule {
+  manifest = {
+    id: 'my-module',
+    name: 'My Module',
+    version: '1.0.0',
+    tier: 'optional',
+  };
+
+  async initialize(ctx: ModuleContext) { }
+  async start() { }
+  async stop() { }
+}
 ```
+
+## Roadmap
+
+### Phase 1 (Current Priority)
+- [ ] Site context (AsyncLocalStorage)
+- [ ] Feature flag system
+- [ ] Security middleware integration
+- [ ] Domain routing
+
+### Phase 2
+- [ ] CQRS/Event Sourcing integration
+- [ ] Content type builder
+- [ ] Field API
+
+### Phase 3+
+- [ ] AI-native features
+- [ ] Multi-site deployment
+- [ ] Enterprise collaboration
 
 ## License
 
 MIT
-
----
-
-*Built with [Claude Code](https://claude.ai/code)*
