@@ -19,10 +19,17 @@ function Router() {
     }
   }, [location, setLocation]);
 
+  // Debug: log current location
+  console.log("[Router] Current location:", location);
+
   return (
     <Switch>
       <Route path="/editor" component={EditorPage} />
-      <Route path="/admin/kernel" component={KernelAdminPage} />
+      <Route path="/admin/kernel">
+        <ErrorBoundary>
+          <KernelAdminPage />
+        </ErrorBoundary>
+      </Route>
       <Route component={NotFound} />
     </Switch>
   );

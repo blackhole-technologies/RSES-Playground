@@ -15,15 +15,23 @@ const useHttps = fs.existsSync(certPath) && fs.existsSync(keyPath);
 
 export async function setupVite(server: Server, app: Express) {
   const port = parseInt(process.env.PORT || "5000", 10);
+
+  // HMR over WSS with self-signed certs doesn't work reliably in browsers.
+  // Disable HMR when using HTTPS to avoid WebSocket connection errors.
+  // The app still works, just requires manual refresh.
+  const hmrConfig = useHttps
+    ? false  // Disable HMR over HTTPS
+    : {
+        server,
+        path: "/vite-hmr",
+        protocol: "ws" as const,
+        host: "localhost",
+        clientPort: port,
+      };
+
   const serverOptions = {
     middlewareMode: true,
-    hmr: {
-      server,
-      path: "/vite-hmr",
-      protocol: useHttps ? "wss" : "ws",
-      host: "localhost",
-      clientPort: port,
-    },
+    hmr: hmrConfig,
     allowedHosts: true as const,
   };
 
