@@ -269,12 +269,20 @@ export class ApiGateway implements IApiGateway {
     // Parse JSON bodies
     this.app.use(express.json({ limit: "10mb" }));
 
-    // CORS headers (configurable in production)
+    // CORS headers - explicit origins only
+    const allowedOrigins = this.getAllowedOrigins();
     this.app.use((req, res, next) => {
-      res.header("Access-Control-Allow-Origin", "*");
+      const origin = req.headers.origin;
+
+      // Only set CORS headers if origin is in allowed list
+      if (origin && allowedOrigins.includes(origin)) {
+        res.header("Access-Control-Allow-Origin", origin);
+        res.header("Access-Control-Allow-Credentials", "true");
+      }
+
       res.header(
         "Access-Control-Allow-Headers",
-        "Origin, X-Requested-With, Content-Type, Accept, Authorization"
+        "Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Site-ID"
       );
       res.header(
         "Access-Control-Allow-Methods",
@@ -296,6 +304,38 @@ export class ApiGateway implements IApiGateway {
       );
       next();
     });
+  }
+
+  /**
+   * Get allowed CORS origins from environment.
+   *
+   * @returns Array of allowed origin URLs
+   *
+   * In production: requires explicit ALLOWED_ORIGINS env var
+   * In development: defaults to localhost on common ports
+   */
+  private getAllowedOrigins(): string[] {
+    const envOrigins = process.env.ALLOWED_ORIGINS;
+
+    if (envOrigins) {
+      // Parse comma-separated list from env
+      return envOrigins.split(",").map((o) => o.trim()).filter(Boolean);
+    }
+
+    // Development defaults - localhost only
+    if (process.env.NODE_ENV !== "production") {
+      return [
+        "https://localhost:5000",
+        "https://localhost:5173",
+        "http://localhost:5000",
+        "http://localhost:5173",
+        "http://localhost:3000",
+      ];
+    }
+
+    // Production with no ALLOWED_ORIGINS = no CORS (same-origin only)
+    log.warn("No ALLOWED_ORIGINS configured - CORS disabled for cross-origin requests");
+    return [];
   }
 
   // =========================================================================

@@ -611,10 +611,19 @@ function setupKernelAdminRoutes(
   events: IEventBus
 ): void {
   // P0 SECURITY: Require authentication and admin role for all kernel routes
-  // Skip auth in development for easier testing
-  if (process.env.NODE_ENV === "production") {
-    app.use("/api/kernel", requireAuth, requireAdmin);
+  // In development, inject a dev admin user if not authenticated
+  if (process.env.NODE_ENV !== "production") {
+    app.use("/api/kernel", (req: any, res, next) => {
+      if (!req.isAuthenticated || !req.isAuthenticated()) {
+        // Inject dev admin user for unauthenticated requests
+        req.user = { id: "dev-admin", email: "dev@localhost", isAdmin: true };
+        req.isAuthenticated = () => true;
+      }
+      next();
+    });
   }
+  // Always apply auth checks (dev user passes, real users need real auth)
+  app.use("/api/kernel", requireAuth, requireAdmin);
 
   // GET /api/kernel/modules - List all modules
   app.get("/api/kernel/modules", (req, res) => {
