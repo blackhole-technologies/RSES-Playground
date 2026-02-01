@@ -8,3 +8,6 @@ vite.config.ts.*
 .env
 .env.*
 .local/
+
+# Certificate backups
+*.pem.bak
