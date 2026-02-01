@@ -169,3 +169,101 @@ export const insertModuleConfigSchema = createInsertSchema(moduleConfigs).omit({
 
 export type ModuleConfig = typeof moduleConfigs.$inferSelect;
 export type InsertModuleConfig = z.infer<typeof insertModuleConfigSchema>;
+
+// === Feature Flags Tables (Phase 10 - Admin Interface & Feature Toggles) ===
+
+export const featureFlags = pgTable("feature_flags", {
+  key: text("key").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description").notNull(),
+  category: text("category").$type<"core" | "optional" | "beta" | "experimental" | "deprecated">().notNull(),
+  globallyEnabled: boolean("globally_enabled").default(true).notNull(),
+  toggleable: boolean("toggleable").default(true).notNull(),
+  defaultState: boolean("default_state").default(false).notNull(),
+  percentageRollout: jsonb("percentage_rollout").$type<{
+    enabled: boolean;
+    percentage: number;
+    bucketBy: string[];
+  }>(),
+  dependencies: jsonb("dependencies").$type<Array<{ featureKey: string; requiredState: boolean }>>().default([]),
+  tags: jsonb("tags").$type<string[]>().default([]),
+  owner: text("owner"),
+  sunsetDate: text("sunset_date"),
+  targetingRules: jsonb("targeting_rules").$type<Array<{
+    id: string;
+    name: string;
+    conditions: unknown[];
+    enabled: boolean;
+    priority: number;
+  }>>().default([]),
+  changeHistory: jsonb("change_history").$type<Array<{
+    timestamp: string;
+    userId: string;
+    action: string;
+    previousValue?: unknown;
+    newValue?: unknown;
+    reason?: string;
+  }>>().default([]),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  lastModifiedBy: text("last_modified_by"),
+});
+
+export type FeatureFlagRow = typeof featureFlags.$inferSelect;
+export type InsertFeatureFlagRow = typeof featureFlags.$inferInsert;
+
+export const siteFeatureOverrides = pgTable("site_feature_overrides", {
+  id: serial("id").primaryKey(),
+  siteId: text("site_id").notNull(),
+  featureKey: text("feature_key").notNull().references(() => featureFlags.key, { onDelete: "cascade" }),
+  enabled: boolean("enabled").notNull(),
+  reason: text("reason"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  createdBy: text("created_by"),
+});
+
+export type SiteFeatureOverrideRow = typeof siteFeatureOverrides.$inferSelect;
+
+export const userFeatureOverrides = pgTable("user_feature_overrides", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  featureKey: text("feature_key").notNull().references(() => featureFlags.key, { onDelete: "cascade" }),
+  enabled: boolean("enabled").notNull(),
+  reason: text("reason"),
+  expiresAt: timestamp("expires_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  createdBy: text("created_by"),
+});
+
+export type UserFeatureOverrideRow = typeof userFeatureOverrides.$inferSelect;
+
+export const featureUsageStats = pgTable("feature_usage_stats", {
+  id: serial("id").primaryKey(),
+  featureKey: text("feature_key").notNull().references(() => featureFlags.key, { onDelete: "cascade" }),
+  period: text("period").$type<"hour" | "day" | "week" | "month">().notNull(),
+  periodStart: timestamp("period_start").notNull(),
+  evaluations: integer("evaluations").default(0).notNull(),
+  enabledEvaluations: integer("enabled_evaluations").default(0).notNull(),
+  disabledEvaluations: integer("disabled_evaluations").default(0).notNull(),
+  uniqueUsers: integer("unique_users").default(0).notNull(),
+  evaluationErrors: integer("evaluation_errors").default(0).notNull(),
+  avgEvaluationTimeMs: integer("avg_evaluation_time_ms").default(0).notNull(),
+});
+
+export type FeatureUsageStatsRow = typeof featureUsageStats.$inferSelect;
+
+export const featureRolloutHistory = pgTable("feature_rollout_history", {
+  id: serial("id").primaryKey(),
+  featureKey: text("feature_key").notNull().references(() => featureFlags.key, { onDelete: "cascade" }),
+  eventType: text("event_type").notNull(),
+  previousValue: jsonb("previous_value"),
+  newValue: jsonb("new_value"),
+  siteId: text("site_id"),
+  userId: text("user_id"),
+  performedBy: text("performed_by"),
+  reason: text("reason"),
+  timestamp: timestamp("timestamp").defaultNow(),
+});
+
+export type FeatureRolloutHistoryRow = typeof featureRolloutHistory.$inferSelect;

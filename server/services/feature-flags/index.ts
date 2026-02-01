@@ -46,11 +46,27 @@ import {
   InMemoryUsageStatsStorage,
   InMemoryRolloutHistoryStorage,
 } from "./storage";
+import { createPgStorage } from "./pg-storage";
 import { FeatureFlagEvaluator } from "./evaluator";
 import { FeatureDependencyResolver } from "./dependency-resolver";
 import { createModuleLogger } from "../../logger";
 
 const log = createModuleLogger("feature-flags-service");
+
+/**
+ * Determine if PostgreSQL storage should be used.
+ * Use PostgreSQL if DATABASE_URL is set and not explicitly disabled.
+ */
+function shouldUsePgStorage(): boolean {
+  if (!process.env.DATABASE_URL) {
+    return false;
+  }
+  // Allow explicit override to use in-memory
+  if (process.env.FEATURE_FLAGS_STORAGE === "memory") {
+    return false;
+  }
+  return true;
+}
 
 // =============================================================================
 // FEATURE FLAGS SERVICE
@@ -82,12 +98,23 @@ export class FeatureFlagsService {
   constructor(config: Partial<FeatureFlagServiceConfig> = {}) {
     this.config = { ...defaultServiceConfig, ...config };
 
-    // Initialize storage
-    this.flagStorage = new InMemoryFeatureFlagStorage();
-    this.siteOverrideStorage = new InMemorySiteOverrideStorage();
-    this.userOverrideStorage = new InMemoryUserOverrideStorage();
-    this.usageStatsStorage = new InMemoryUsageStatsStorage();
-    this.rolloutHistoryStorage = new InMemoryRolloutHistoryStorage();
+    // Initialize storage - use PostgreSQL if available, otherwise in-memory
+    if (shouldUsePgStorage()) {
+      const pgStorage = createPgStorage();
+      this.flagStorage = pgStorage.flags;
+      this.siteOverrideStorage = pgStorage.siteOverrides;
+      this.userOverrideStorage = pgStorage.userOverrides;
+      this.usageStatsStorage = pgStorage.usageStats;
+      this.rolloutHistoryStorage = pgStorage.rolloutHistory;
+      log.info("Feature flags service using PostgreSQL storage");
+    } else {
+      this.flagStorage = new InMemoryFeatureFlagStorage();
+      this.siteOverrideStorage = new InMemorySiteOverrideStorage();
+      this.userOverrideStorage = new InMemoryUserOverrideStorage();
+      this.usageStatsStorage = new InMemoryUsageStatsStorage();
+      this.rolloutHistoryStorage = new InMemoryRolloutHistoryStorage();
+      log.info("Feature flags service using in-memory storage");
+    }
 
     // Initialize evaluator
     this.evaluator = new FeatureFlagEvaluator(
