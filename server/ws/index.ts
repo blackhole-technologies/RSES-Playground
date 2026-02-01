@@ -44,9 +44,19 @@ export class WSServer {
   private wss: WebSocketServer;
   private clients: Map<string, ExtendedWebSocket> = new Map();
   private heartbeatInterval: NodeJS.Timeout | null = null;
+  private requireAuth: boolean;
 
   constructor(server: Server, path: string = "/ws") {
-    this.wss = new WebSocketServer({ server, path });
+    // SECURITY: Require authentication in production
+    this.requireAuth = process.env.NODE_ENV === "production" ||
+                       process.env.WS_REQUIRE_AUTH === "true";
+
+    this.wss = new WebSocketServer({
+      server,
+      path,
+      // Verify client during handshake
+      verifyClient: this.requireAuth ? this.verifyClient.bind(this) : undefined,
+    });
 
     this.wss.on("connection", this.handleConnection.bind(this));
     this.wss.on("error", this.handleServerError.bind(this));
@@ -54,7 +64,48 @@ export class WSServer {
     // Start heartbeat checker
     this.startHeartbeat();
 
-    log.info({ path }, "WebSocket server started");
+    log.info({ path, requireAuth: this.requireAuth }, "WebSocket server started");
+  }
+
+  /**
+   * Verifies client authentication during WebSocket handshake.
+   * Called before connection is established.
+   */
+  private verifyClient(
+    info: { origin: string; req: any; secure: boolean },
+    callback: (result: boolean, code?: number, message?: string) => void
+  ): void {
+    const req = info.req;
+
+    // Check for session cookie
+    const cookies = this.parseCookies(req.headers.cookie || "");
+    const sessionId = cookies["connect.sid"] || cookies["session"];
+
+    if (!sessionId) {
+      log.warn({ origin: info.origin }, "WebSocket connection rejected: no session");
+      callback(false, 401, "Authentication required");
+      return;
+    }
+
+    // In production, validate session against session store
+    // For now, accept any session cookie (session validation happens at message level)
+    // TODO: Add proper session validation with session store lookup
+    log.debug({ origin: info.origin }, "WebSocket client verified");
+    callback(true);
+  }
+
+  /**
+   * Parses cookie header into key-value pairs.
+   */
+  private parseCookies(cookieHeader: string): Record<string, string> {
+    const cookies: Record<string, string> = {};
+    cookieHeader.split(";").forEach((cookie) => {
+      const [name, ...rest] = cookie.split("=");
+      if (name) {
+        cookies[name.trim()] = rest.join("=").trim();
+      }
+    });
+    return cookies;
   }
 
   /**

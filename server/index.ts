@@ -110,6 +110,74 @@ registerMetricsRoute(app);
 // Auth routes (before other routes)
 app.use("/api/auth", authRoutes);
 
+// ==========================================================================
+// PHASE 1 FOUNDATION - MULTI-SITE INFRASTRUCTURE
+// ==========================================================================
+// Site context middleware provides request-scoped site isolation via AsyncLocalStorage.
+// Feature flags API provides LaunchDarkly-style flag management.
+// ==========================================================================
+
+import { createSiteContextMiddleware } from "./multisite/site/site-context";
+import {
+  createNetworkDbAdapter,
+  createShardRouterAdapter,
+  createCacheServiceAdapter,
+  createFeatureServiceAdapter,
+  createDomainRegistryAdapter,
+  createDnsProviderAdapter,
+} from "./services/adapters";
+import featureFlagRoutes from "./services/feature-flags/routes";
+import { DomainRouter } from "./multisite/routing/domain-router";
+import {
+  createTenantIsolationMiddleware,
+  enforceSiteIsolation,
+} from "./middleware/tenant-isolation";
+
+// Initialize adapters for site context
+const networkDb = createNetworkDbAdapter();
+const shardRouter = createShardRouterAdapter();
+const cacheService = createCacheServiceAdapter();
+const featureService = createFeatureServiceAdapter();
+
+// Initialize domain router for domain-to-site resolution
+const domainRegistry = createDomainRegistryAdapter();
+const dnsProvider = createDnsProviderAdapter();
+const domainRouter = new DomainRouter(
+  domainRegistry,
+  dnsProvider,
+  createModuleLogger("domain-router")
+);
+
+// Tenant isolation middleware for cross-site security
+const tenantIsolationMiddleware = createTenantIsolationMiddleware();
+const siteIsolationEnforcer = enforceSiteIsolation();
+
+// Site context middleware - applied to all /api routes (except auth which is above)
+// Extracts site ID from X-Site-ID header or resolves from hostname
+// Makes site context available via getSiteContext() anywhere in the request chain
+const siteContextMiddleware = createSiteContextMiddleware({
+  networkDb,
+  shardRouter,
+  featureService,
+  cacheService,
+  logger: createModuleLogger("site-context"),
+});
+
+// Apply site context to API routes that need multi-site isolation
+// Skip for auth routes (already mounted above) and health routes (mounted early)
+app.use("/api/projects", siteContextMiddleware, tenantIsolationMiddleware, siteIsolationEnforcer);
+app.use("/api/content", siteContextMiddleware, tenantIsolationMiddleware, siteIsolationEnforcer);
+app.use("/api/taxonomy", siteContextMiddleware, tenantIsolationMiddleware, siteIsolationEnforcer);
+app.use("/api/media", siteContextMiddleware, tenantIsolationMiddleware, siteIsolationEnforcer);
+app.use("/api/rses", siteContextMiddleware, tenantIsolationMiddleware, siteIsolationEnforcer);
+
+// Feature flags admin API routes
+// Provides CRUD operations, evaluation, statistics, and rollout history
+app.use("/api/admin", featureFlagRoutes);
+
+// Export domain router for use by other services
+export { domainRouter };
+
 // Module logger for server operations
 const serverLog = createModuleLogger("server");
 

@@ -454,13 +454,10 @@ export class ExpressionEvaluator {
     condition: { expression: string },
     variables: Record<string, unknown>
   ): boolean {
-    try {
-      // Sandboxed evaluation (simplified - production would use vm2 or similar)
-      const fn = new Function("vars", `with(vars) { return ${condition.expression}; }`);
-      return Boolean(fn(variables));
-    } catch {
-      return false;
-    }
+    // SECURITY FIX: Use safe expression evaluator instead of new Function()
+    // This prevents arbitrary code execution from untrusted input
+    const { safeEvaluateBoolean } = require("../../lib/safe-expression");
+    return safeEvaluateBoolean(condition.expression, variables);
   }
 
   private getFieldValue(field: string, variables: Record<string, unknown>): unknown {
@@ -531,9 +528,15 @@ export class TransformExecutor {
   ): unknown {
     if (!Array.isArray(input)) return transform.initialValue;
 
+    // SECURITY FIX: Reduce with arbitrary expressions is disabled
+    // Only allow simple sum/concat operations
+    const { safeEvaluate } = require("../../lib/safe-expression");
+
     try {
-      const fn = new Function("acc", "item", `return ${transform.expression};`);
-      return input.reduce((acc, item) => fn(acc, item), transform.initialValue);
+      return input.reduce((acc, item) => {
+        const result = safeEvaluate(transform.expression, { acc, item });
+        return result !== undefined ? result : acc;
+      }, transform.initialValue);
     } catch {
       return transform.initialValue;
     }
@@ -566,13 +569,19 @@ export class TransformExecutor {
   }
 
   private executeCode(transform: { code: string }, input: unknown): unknown {
-    try {
-      // Sandboxed execution (simplified)
-      const fn = new Function("input", transform.code);
-      return fn(input);
-    } catch {
-      return input;
-    }
+    // SECURITY FIX: Arbitrary code execution is DISABLED
+    // This was a critical RCE vulnerability (new Function with untrusted input)
+    // To re-enable, implement proper sandboxing with vm2 or isolated-vm
+    const { createModuleLogger } = require("../../logger");
+    const log = createModuleLogger("workflow-engine");
+
+    log.warn(
+      { codeLength: transform.code.length },
+      "executeCode called but disabled for security - use safe transforms instead"
+    );
+
+    // Return input unchanged - do not execute arbitrary code
+    return input;
   }
 
   private getPath(obj: Record<string, unknown>, path: string): unknown {
