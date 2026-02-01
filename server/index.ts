@@ -24,6 +24,8 @@ import { metricsMiddleware, registerMetricsRoute } from "./metrics";
 
 // Kernel integration (optional - enable via ENABLE_KERNEL=true)
 import { initializeKernel, getKernel } from "./kernel-integration";
+import { createKernelWSBridge } from "./kernel";
+import { getWSServer } from "./ws";
 
 const app = express();
 
@@ -49,12 +51,15 @@ declare module "http" {
 }
 
 // Security middleware - applied first
+// Higher rate limit in development for Vite HMR and chunk loading
+const isDev = process.env.NODE_ENV !== "production";
 const securityMiddleware = createSecurityMiddleware({
   maxBodySize: 1024 * 1024, // 1MB
   maxConfigSize: 512 * 1024, // 512KB
   rateLimitWindowMs: 15 * 60 * 1000, // 15 minutes
-  rateLimitMax: 100,
+  rateLimitMax: isDev ? 1000 : 100, // Higher limit for dev
   enableCsrf: process.env.NODE_ENV === "production",
+  rateLimitExemptPaths: ["/health", "/ready", "/@", "/node_modules", "/src"],
 });
 
 // Apply security middleware (helmet, rate limiting, path traversal, input limits)
@@ -154,9 +159,20 @@ export function log(message: string, source = "express") {
         "Kernel initialized with modules"
       );
 
+      // Setup WebSocket bridge for real-time kernel events
+      const wsServer = getWSServer();
+      let cleanupBridge: (() => void) | null = null;
+      if (wsServer) {
+        cleanupBridge = createKernelWSBridge(kernel.events, wsServer);
+        serverLog.info("Kernel WebSocket bridge activated");
+      }
+
       // Register kernel shutdown with process signals
       const originalShutdown = () => {
         serverLog.info("Shutting down kernel...");
+        if (cleanupBridge) {
+          cleanupBridge();
+        }
         return kernel.shutdown();
       };
 

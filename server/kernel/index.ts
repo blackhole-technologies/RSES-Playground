@@ -164,6 +164,14 @@ export {
 } from "./gateway";
 
 /**
+ * WebSocket bridge for real-time event streaming
+ */
+export {
+  createKernelWSBridge,
+  KERNEL_WS_CHANNEL,
+} from "./ws-bridge";
+
+/**
  * Type definitions
  */
 export type {

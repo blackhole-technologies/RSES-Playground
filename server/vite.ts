@@ -8,6 +8,11 @@ import { nanoid } from "nanoid";
 
 const viteLogger = createLogger();
 
+// Check if SSL certs exist
+const certPath = path.resolve(process.cwd(), "certs/cert.pem");
+const keyPath = path.resolve(process.cwd(), "certs/key.pem");
+const useHttps = fs.existsSync(certPath) && fs.existsSync(keyPath);
+
 export async function setupVite(server: Server, app: Express) {
   const port = parseInt(process.env.PORT || "5000", 10);
   const serverOptions = {
@@ -15,7 +20,7 @@ export async function setupVite(server: Server, app: Express) {
     hmr: {
       server,
       path: "/vite-hmr",
-      protocol: "wss",
+      protocol: useHttps ? "wss" : "ws",
       host: "localhost",
       clientPort: port,
     },

@@ -22,7 +22,20 @@ export type WSMessageType =
   | "scan:started"
   | "scan:progress"
   | "scan:completed"
-  | "error";
+  | "error"
+  // Kernel events
+  | "kernel:event"
+  | "kernel:module:registered"
+  | "kernel:module:loaded"
+  | "kernel:module:started"
+  | "kernel:module:stopped"
+  | "kernel:module:enabled"
+  | "kernel:module:disabled"
+  | "kernel:module:failed"
+  | "kernel:module:health"
+  | "kernel:system:ready"
+  | "kernel:system:shutdown"
+  | "kernel:system:health";
 
 /**
  * Base WebSocket message structure.
@@ -161,6 +174,141 @@ export interface WSErrorMessage extends WSMessage {
   message: string;
 }
 
+// =============================================================================
+// KERNEL EVENT MESSAGES
+// =============================================================================
+
+/**
+ * Generic kernel event payload for streaming.
+ */
+export interface KernelEventData {
+  type: string;
+  moduleId?: string;
+  data?: unknown;
+  source?: string;
+  correlationId?: string;
+}
+
+/**
+ * Generic kernel event message.
+ */
+export interface WSKernelEventMessage extends WSMessage {
+  type: "kernel:event";
+  data: KernelEventData;
+}
+
+/**
+ * Module lifecycle event data.
+ */
+export interface ModuleEventData {
+  moduleId: string;
+  moduleName: string;
+  tier: string;
+  state?: string;
+  version?: string;
+  error?: string;
+}
+
+/**
+ * Module registered event.
+ */
+export interface WSKernelModuleRegisteredMessage extends WSMessage {
+  type: "kernel:module:registered";
+  data: ModuleEventData;
+}
+
+/**
+ * Module loaded event.
+ */
+export interface WSKernelModuleLoadedMessage extends WSMessage {
+  type: "kernel:module:loaded";
+  data: ModuleEventData;
+}
+
+/**
+ * Module started event.
+ */
+export interface WSKernelModuleStartedMessage extends WSMessage {
+  type: "kernel:module:started";
+  data: ModuleEventData;
+}
+
+/**
+ * Module stopped event.
+ */
+export interface WSKernelModuleStoppedMessage extends WSMessage {
+  type: "kernel:module:stopped";
+  data: ModuleEventData;
+}
+
+/**
+ * Module enabled event.
+ */
+export interface WSKernelModuleEnabledMessage extends WSMessage {
+  type: "kernel:module:enabled";
+  data: ModuleEventData;
+}
+
+/**
+ * Module disabled event.
+ */
+export interface WSKernelModuleDisabledMessage extends WSMessage {
+  type: "kernel:module:disabled";
+  data: ModuleEventData;
+}
+
+/**
+ * Module failed event.
+ */
+export interface WSKernelModuleFailedMessage extends WSMessage {
+  type: "kernel:module:failed";
+  data: ModuleEventData & { error: string };
+}
+
+/**
+ * Module health changed event.
+ */
+export interface WSKernelModuleHealthMessage extends WSMessage {
+  type: "kernel:module:health";
+  data: {
+    moduleId: string;
+    status: "healthy" | "degraded" | "unhealthy";
+    message?: string;
+  };
+}
+
+/**
+ * System ready event.
+ */
+export interface WSKernelSystemReadyMessage extends WSMessage {
+  type: "kernel:system:ready";
+  data: {
+    bootTimeMs: number;
+    modulesLoaded: number;
+  };
+}
+
+/**
+ * System shutdown event.
+ */
+export interface WSKernelSystemShutdownMessage extends WSMessage {
+  type: "kernel:system:shutdown";
+  data: {
+    reason?: string;
+  };
+}
+
+/**
+ * System health check event.
+ */
+export interface WSKernelSystemHealthMessage extends WSMessage {
+  type: "kernel:system:health";
+  data: {
+    status: "healthy" | "degraded" | "unhealthy";
+    modules: Record<string, { status: string; message?: string }>;
+  };
+}
+
 /**
  * Union of all WebSocket message types.
  */
@@ -176,7 +324,20 @@ export type WSMessageUnion =
   | WSScanStartedMessage
   | WSScanProgressMessage
   | WSScanCompletedMessage
-  | WSErrorMessage;
+  | WSErrorMessage
+  // Kernel events
+  | WSKernelEventMessage
+  | WSKernelModuleRegisteredMessage
+  | WSKernelModuleLoadedMessage
+  | WSKernelModuleStartedMessage
+  | WSKernelModuleStoppedMessage
+  | WSKernelModuleEnabledMessage
+  | WSKernelModuleDisabledMessage
+  | WSKernelModuleFailedMessage
+  | WSKernelModuleHealthMessage
+  | WSKernelSystemReadyMessage
+  | WSKernelSystemShutdownMessage
+  | WSKernelSystemHealthMessage;
 
 /**
  * Client-to-server message types.

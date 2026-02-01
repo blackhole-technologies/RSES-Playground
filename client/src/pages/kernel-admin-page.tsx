@@ -13,7 +13,7 @@
  * @created 2026-02-01
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link } from "wouter";
 import {
   useKernelModules,
@@ -29,6 +29,7 @@ import {
   type KernelModuleSummary,
   type ModuleTier,
 } from "@/hooks/use-kernel";
+import { useKernelEventsWS, type KernelEvent } from "@/hooks/use-websocket";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -68,6 +69,10 @@ import {
   Power,
   PowerOff,
   GitBranch,
+  Radio,
+  Wifi,
+  WifiOff,
+  Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -829,7 +834,207 @@ function DependencyGraph({ onSelect }: { onSelect: (id: string) => void }) {
 }
 
 // =============================================================================
-// EVENT LOG COMPONENT
+// LIVE EVENT LOG COMPONENT (WebSocket-powered)
+// =============================================================================
+
+/**
+ * Get icon for kernel event type.
+ */
+function getEventIcon(type: string) {
+  if (type.includes("started") || type.includes("enabled")) {
+    return <Power className="h-4 w-4 text-green-500" />;
+  }
+  if (type.includes("stopped") || type.includes("disabled")) {
+    return <PowerOff className="h-4 w-4 text-yellow-500" />;
+  }
+  if (type.includes("failed")) {
+    return <XCircle className="h-4 w-4 text-red-500" />;
+  }
+  if (type.includes("health")) {
+    return <Activity className="h-4 w-4 text-blue-500" />;
+  }
+  if (type.includes("registered") || type.includes("loaded")) {
+    return <Box className="h-4 w-4 text-purple-500" />;
+  }
+  if (type.includes("system:ready")) {
+    return <CheckCircle2 className="h-4 w-4 text-green-500" />;
+  }
+  if (type.includes("system:shutdown")) {
+    return <AlertTriangle className="h-4 w-4 text-orange-500" />;
+  }
+  return <Zap className="h-4 w-4 text-muted-foreground" />;
+}
+
+/**
+ * Format event type for display.
+ */
+function formatEventType(type: string): string {
+  return type
+    .replace("kernel:", "")
+    .replace("module:", "")
+    .replace("system:", "⚙ ");
+}
+
+/**
+ * Live event log with WebSocket connection.
+ */
+function LiveEventLog() {
+  const {
+    events,
+    isConnected,
+    clearEvents,
+  } = useKernelEventsWS(100);
+  const { data: historicalEvents, isLoading, refetch } = useKernelEvents(50);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [autoScroll, setAutoScroll] = useState(true);
+
+  // Auto-scroll to top when new events arrive
+  useEffect(() => {
+    if (autoScroll && scrollRef.current && events.length > 0) {
+      scrollRef.current.scrollTop = 0;
+    }
+  }, [events, autoScroll]);
+
+  // Combine live and historical events
+  const allEvents = events.length > 0
+    ? events
+    : (historicalEvents || []).map((e) => ({
+        type: e.type as KernelEvent["type"],
+        timestamp: new Date(e.timestamp).getTime(),
+        data: e.data as KernelEvent["data"],
+      }));
+
+  return (
+    <div className="space-y-4">
+      {/* Connection status bar */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          {isConnected ? (
+            <>
+              <Radio className="h-4 w-4 text-green-500 animate-pulse" />
+              <span className="text-sm text-green-600">Live</span>
+              <Wifi className="h-4 w-4 text-green-500" />
+            </>
+          ) : (
+            <>
+              <Radio className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm text-muted-foreground">Disconnected</span>
+              <WifiOff className="h-4 w-4 text-muted-foreground" />
+            </>
+          )}
+          <span className="text-xs text-muted-foreground ml-2">
+            {events.length} live events
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => clearEvents()}
+            disabled={events.length === 0}
+          >
+            <Trash2 className="h-4 w-4 mr-1" />
+            Clear
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => refetch()}
+          >
+            <RefreshCw className="h-4 w-4 mr-1" />
+            Refresh History
+          </Button>
+        </div>
+      </div>
+
+      {/* Events list */}
+      {isLoading && events.length === 0 ? (
+        <div className="space-y-2">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+        </div>
+      ) : allEvents.length === 0 ? (
+        <div className="text-center text-muted-foreground p-6">
+          <Radio className="h-8 w-8 mx-auto mb-2 opacity-50" />
+          <p>Waiting for kernel events...</p>
+          <p className="text-xs mt-1">
+            Events will appear here in real-time when modules change state.
+          </p>
+        </div>
+      ) : (
+        <ScrollArea className="h-[400px]" ref={scrollRef}>
+          <div className="space-y-2 pr-4">
+            {allEvents.map((event, index) => (
+              <div
+                key={`${event.type}-${event.timestamp}-${index}`}
+                className={cn(
+                  "flex items-start gap-3 p-3 rounded-lg transition-colors",
+                  index === 0 && events.length > 0
+                    ? "bg-primary/10 border border-primary/20"
+                    : "bg-muted/50"
+                )}
+              >
+                {getEventIcon(event.type)}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-mono text-sm font-medium">
+                      {formatEventType(event.type)}
+                    </span>
+                    {event.data?.moduleId && (
+                      <Badge variant="outline" className="text-xs">
+                        {event.data.moduleId}
+                      </Badge>
+                    )}
+                    {event.data?.moduleName && (
+                      <span className="text-xs text-muted-foreground">
+                        {event.data.moduleName}
+                      </span>
+                    )}
+                    {event.data?.status && (
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          "text-xs",
+                          event.data.status === "healthy" && "text-green-600",
+                          event.data.status === "degraded" && "text-yellow-600",
+                          event.data.status === "unhealthy" && "text-red-600"
+                        )}
+                      >
+                        {event.data.status}
+                      </Badge>
+                    )}
+                    {event.data?.error && (
+                      <span className="text-xs text-red-500 truncate max-w-[200px]">
+                        {event.data.error}
+                      </span>
+                    )}
+                  </div>
+                  {event.data?.message && (
+                    <p className="text-xs text-muted-foreground mt-1 truncate">
+                      {event.data.message}
+                    </p>
+                  )}
+                  {event.data?.bootTimeMs !== undefined && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Boot time: {event.data.bootTimeMs}ms, {event.data.modulesLoaded} modules
+                    </p>
+                  )}
+                </div>
+                <span className="text-xs text-muted-foreground whitespace-nowrap">
+                  {new Date(event.timestamp).toLocaleTimeString()}
+                </span>
+              </div>
+            ))}
+          </div>
+        </ScrollArea>
+      )}
+    </div>
+  );
+}
+
+// =============================================================================
+// LEGACY EVENT LOG (HTTP polling fallback)
 // =============================================================================
 
 function EventLog() {
@@ -956,7 +1161,10 @@ export default function KernelAdminPage() {
           <TabsTrigger value="core">Core</TabsTrigger>
           <TabsTrigger value="optional">Optional</TabsTrigger>
           <TabsTrigger value="dependencies">Dependencies</TabsTrigger>
-          <TabsTrigger value="events">Event Log</TabsTrigger>
+          <TabsTrigger value="events" className="flex items-center gap-1">
+            <Radio className="h-3 w-3" />
+            Live Events
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="all">
@@ -989,12 +1197,12 @@ export default function KernelAdminPage() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Zap className="h-5 w-5" />
-                Recent Events
+                <Radio className="h-5 w-5" />
+                Live Events
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <EventLog />
+              <LiveEventLog />
             </CardContent>
           </Card>
         </TabsContent>
