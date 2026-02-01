@@ -150,3 +150,22 @@ export const insertActivityLogSchema = createInsertSchema(activityLog).omit({
 
 export type ActivityLogEntry = typeof activityLog.$inferSelect;
 export type InsertActivityLogEntry = z.infer<typeof insertActivityLogSchema>;
+
+// === Module Configs Table (Phase 6 - Kernel Config Persistence) ===
+
+export const moduleConfigs = pgTable("module_configs", {
+  id: serial("id").primaryKey(),
+  moduleId: text("module_id").notNull().unique(),
+  config: jsonb("config").$type<Record<string, unknown>>().notNull().default({}),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertModuleConfigSchema = createInsertSchema(moduleConfigs).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type ModuleConfig = typeof moduleConfigs.$inferSelect;
+export type InsertModuleConfig = z.infer<typeof insertModuleConfigSchema>;

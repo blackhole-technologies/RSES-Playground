@@ -28,7 +28,7 @@ import {
   DEFAULT_RESOURCE_LIMITS,
   CAPABILITY_REGISTRY,
   PRODUCTION_SECURITY_DEFAULTS,
-} from "@docs/security/module-security-architecture";
+} from "./module-security-architecture";
 
 // =============================================================================
 // MODULE SECURITY SERVICE IMPLEMENTATION

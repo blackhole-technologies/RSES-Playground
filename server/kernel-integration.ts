@@ -70,7 +70,9 @@ import type {
   IApiGateway,
   IModule,
 } from "./kernel/types";
-import { readdir, access } from "fs/promises";
+import { readdir, access, writeFile, mkdir } from "fs/promises";
+import { moduleConfigStorage } from "./storage";
+import { requireAuth, requireAdmin } from "./auth/session";
 
 const log = createModuleLogger("kernel-integration");
 
@@ -82,6 +84,12 @@ const log = createModuleLogger("kernel-integration");
  * Global kernel state for access throughout the application.
  */
 let kernelState: BootstrapResult | null = null;
+
+/**
+ * Module configurations storage.
+ * Maps module ID to its current config.
+ */
+const moduleConfigs = new Map<string, Record<string, unknown>>();
 
 /**
  * Get the current kernel instance.
@@ -97,6 +105,20 @@ export function getKernel(): BootstrapResult | null {
  */
 export function isKernelInitialized(): boolean {
   return kernelState !== null;
+}
+
+/**
+ * Get a module's current configuration.
+ */
+export function getModuleConfig(moduleId: string): Record<string, unknown> | undefined {
+  return moduleConfigs.get(moduleId);
+}
+
+/**
+ * Set a module's configuration (for programmatic use).
+ */
+export function setModuleConfig(moduleId: string, config: Record<string, unknown>): void {
+  moduleConfigs.set(moduleId, config);
 }
 
 // =============================================================================
@@ -297,11 +319,28 @@ export async function initializeKernel(
   log.info({ count: registry.listModules().length }, "Modules registered");
 
   // =========================================================================
-  // STEP 5: Load Enabled Modules
+  // STEP 5: Load Persisted Configs from Database
+  // =========================================================================
+
+  log.info("Step 5: Loading persisted module configs");
+
+  try {
+    const persistedConfigs = await moduleConfigStorage.getAllModuleConfigs();
+    for (const pc of persistedConfigs) {
+      moduleConfigs.set(pc.moduleId, pc.config as Record<string, unknown>);
+      log.debug({ moduleId: pc.moduleId }, "Loaded persisted config");
+    }
+    log.info({ count: persistedConfigs.length }, "Persisted configs loaded");
+  } catch (error) {
+    log.warn({ error }, "Failed to load persisted configs, using defaults");
+  }
+
+  // =========================================================================
+  // STEP 6: Load Enabled Modules
   // =========================================================================
 
   if (opts.autoLoad) {
-    log.info("Step 5: Loading modules");
+    log.info("Step 6: Loading modules");
 
     // Determine which modules to load
     let modulesToLoad: string[];
@@ -314,7 +353,10 @@ export async function initializeKernel(
 
     // Load each module
     for (const moduleId of modulesToLoad) {
-      const moduleConfig = opts.moduleConfigs[moduleId] || {};
+      // Merge persisted config with provided config (provided takes precedence)
+      const persistedConfig = moduleConfigs.get(moduleId) || {};
+      const providedConfig = opts.moduleConfigs[moduleId] || {};
+      const moduleConfig = { ...persistedConfig, ...providedConfig };
 
       // Pass skipSessionSetup to auth module
       if (moduleId === "auth" && opts.skipSessionSetup) {
@@ -326,6 +368,11 @@ export async function initializeKernel(
         autoStart: true,
         enabled: true,
       });
+
+      // Store merged config for later retrieval
+      if (result.success) {
+        moduleConfigs.set(moduleId, moduleConfig);
+      }
 
       if (!result.success) {
         log.error({ moduleId, error: result.error }, "Failed to load module");
@@ -340,14 +387,14 @@ export async function initializeKernel(
 
     log.info({ count: runningCount }, "Modules loaded and running");
   } else {
-    log.info("Step 5: Auto-load disabled");
+    log.info("Step 6: Auto-load disabled");
   }
 
   // =========================================================================
-  // STEP 6: Setup Health Checks
+  // STEP 7: Setup Health Checks
   // =========================================================================
 
-  log.info("Step 6: Setting up health checks");
+  log.info("Step 7: Setting up health checks");
 
   let healthCheckInterval: NodeJS.Timeout | null = null;
 
@@ -362,10 +409,10 @@ export async function initializeKernel(
   }
 
   // =========================================================================
-  // STEP 7: Create Shutdown Handler
+  // STEP 8: Create Shutdown Handler
   // =========================================================================
 
-  log.info("Step 7: Creating shutdown handler");
+  log.info("Step 8: Creating shutdown handler");
 
   const shutdown = createShutdownHandler(
     container,
@@ -377,7 +424,7 @@ export async function initializeKernel(
   );
 
   // =========================================================================
-  // STEP 8: Store State and Emit Ready
+  // STEP 9: Store State and Emit Ready
   // =========================================================================
 
   const bootTime = Date.now() - startTime;
@@ -563,6 +610,9 @@ function setupKernelAdminRoutes(
   registry: IModuleRegistry,
   events: IEventBus
 ): void {
+  // P0 SECURITY: Require authentication and admin role for all kernel routes
+  app.use("/api/kernel", requireAuth, requireAdmin);
+
   // GET /api/kernel/modules - List all modules
   app.get("/api/kernel/modules", (req, res) => {
     const modules = registry.listModules().map((entry) => ({
@@ -686,7 +736,364 @@ function setupKernelAdminRoutes(
     res.json({ events: history });
   });
 
+  // GET /api/kernel/modules/:id/config - Get module configuration
+  app.get("/api/kernel/modules/:id/config", (req, res) => {
+    const moduleId = req.params.id;
+    const entry = registry.get(moduleId);
+
+    if (!entry) {
+      return res.status(404).json({ error: "Module not found" });
+    }
+
+    const config = moduleConfigs.get(moduleId) || {};
+    const manifest = entry.module.manifest;
+
+    // Extract schema info if available
+    let schemaFields: Array<{
+      name: string;
+      type: string;
+      required: boolean;
+      default?: unknown;
+      description?: string;
+    }> = [];
+
+    // Try to extract schema information from Zod schema
+    if (manifest.configSchema) {
+      try {
+        const schema = manifest.configSchema as any;
+        if (schema._def?.typeName === "ZodObject" && schema._def.shape) {
+          const shape = schema._def.shape();
+          for (const [key, fieldSchema] of Object.entries(shape)) {
+            const field = fieldSchema as any;
+            let fieldType = "string";
+            let isRequired = true;
+            let defaultValue: unknown;
+
+            // Handle optional fields
+            if (field._def?.typeName === "ZodOptional") {
+              isRequired = false;
+              const innerSchema = field._def.innerType;
+              fieldType = getZodTypeName(innerSchema);
+            } else if (field._def?.typeName === "ZodDefault") {
+              defaultValue = field._def.defaultValue();
+              const innerSchema = field._def.innerType;
+              fieldType = getZodTypeName(innerSchema);
+              isRequired = false;
+            } else {
+              fieldType = getZodTypeName(field);
+            }
+
+            schemaFields.push({
+              name: key,
+              type: fieldType,
+              required: isRequired,
+              default: defaultValue,
+            });
+          }
+        }
+      } catch (e) {
+        log.debug({ moduleId, error: e }, "Could not extract schema info");
+      }
+    }
+
+    res.json({
+      moduleId,
+      config,
+      schema: schemaFields,
+      hasSchema: !!manifest.configSchema,
+      supportsHotReload: typeof entry.module.onConfigChange === "function",
+    });
+  });
+
+  // PUT /api/kernel/modules/:id/config - Update module configuration
+  app.put("/api/kernel/modules/:id/config", async (req, res) => {
+    const moduleId = req.params.id;
+    const entry = registry.get(moduleId);
+
+    if (!entry) {
+      return res.status(404).json({ error: "Module not found" });
+    }
+
+    const newConfig = req.body.config;
+
+    if (!newConfig || typeof newConfig !== "object") {
+      return res.status(400).json({ error: "Invalid config object" });
+    }
+
+    // Validate against schema if available
+    const manifest = entry.module.manifest;
+    if (manifest.configSchema) {
+      try {
+        manifest.configSchema.parse(newConfig);
+      } catch (validationError: any) {
+        return res.status(400).json({
+          error: "Config validation failed",
+          details: validationError.errors || validationError.message,
+        });
+      }
+    }
+
+    // Store the new config in memory
+    const oldConfig = moduleConfigs.get(moduleId) || {};
+    const mergedConfig = { ...oldConfig, ...newConfig };
+    moduleConfigs.set(moduleId, mergedConfig);
+
+    // Persist to database
+    try {
+      await moduleConfigStorage.saveModuleConfig(moduleId, mergedConfig);
+      log.debug({ moduleId }, "Config persisted to database");
+    } catch (persistError) {
+      log.error({ moduleId, error: persistError }, "Failed to persist config");
+      // Continue anyway - in-memory config is updated
+    }
+
+    // Try hot-reload if supported
+    let hotReloaded = false;
+    if (typeof entry.module.onConfigChange === "function") {
+      try {
+        hotReloaded = await entry.module.onConfigChange(mergedConfig);
+      } catch (error) {
+        log.warn(
+          { moduleId, error },
+          "Config hot-reload failed, restart required"
+        );
+      }
+    }
+
+    // Emit config change event
+    events.emit("kernel:module:config-changed", {
+      moduleId,
+      hotReloaded,
+      persisted: true,
+      timestamp: new Date(),
+    });
+
+    res.json({
+      success: true,
+      config: mergedConfig,
+      hotReloaded,
+      persisted: true,
+      message: hotReloaded
+        ? "Configuration updated, applied, and persisted"
+        : "Configuration updated and persisted (restart required to apply)",
+    });
+  });
+
+  // POST /api/kernel/modules/install - Install a new module from upload
+  // P0 SECURITY: DISABLED - RCE vulnerability via arbitrary code execution
+  // TODO: Implement secure module installation with:
+  //   - Code signing verification
+  //   - Sandboxed execution
+  //   - Static analysis scanning
+  //   - Trusted registry validation
+  app.post("/api/kernel/modules/install", async (req, res) => {
+    return res.status(503).json({
+      error: "Endpoint disabled pending security review",
+      code: "E_ENDPOINT_DISABLED",
+      message: "Module installation via code upload is disabled for security reasons. Use CLI or trusted registry.",
+    });
+
+    // Original implementation preserved for future secure version:
+    /*
+    const { moduleCode, moduleId } = req.body;
+
+    if (!moduleCode || !moduleId) {
+      return res.status(400).json({
+        error: "moduleCode and moduleId are required",
+      });
+    }
+
+    // Validate moduleId format
+    if (!/^[a-z][a-z0-9-]*$/.test(moduleId)) {
+      return res.status(400).json({
+        error: "moduleId must start with lowercase letter, contain only lowercase letters, numbers, and hyphens",
+      });
+    }
+
+    // Check if module already exists
+    if (registry.get(moduleId)) {
+      return res.status(409).json({
+        error: `Module '${moduleId}' already exists`,
+      });
+    }
+
+    const modulesDir = path.resolve("./server/modules");
+    const moduleDir = path.join(modulesDir, moduleId);
+
+    try {
+      // Create module directory
+      await mkdir(moduleDir, { recursive: true });
+
+      // Write the module file
+      const modulePath = path.join(moduleDir, "index.ts");
+      await writeFile(modulePath, moduleCode, "utf-8");
+
+      // Try to load and register the module
+      try {
+        const moduleExports = await import(modulePath);
+        const ModuleClass =
+          moduleExports.default ||
+          moduleExports[`${moduleId}Module`] ||
+          Object.values(moduleExports).find(
+            (exp: any) => exp?.prototype?.manifest
+          );
+
+        if (!ModuleClass) {
+          // Clean up on failure
+          await import("fs/promises").then((fs) =>
+            fs.rm(moduleDir, { recursive: true, force: true })
+          );
+          return res.status(400).json({
+            error: "No valid module class found in uploaded code",
+          });
+        }
+
+        const instance = new ModuleClass();
+
+        // Validate manifest
+        if (!instance.manifest?.id || !instance.manifest?.name) {
+          await import("fs/promises").then((fs) =>
+            fs.rm(moduleDir, { recursive: true, force: true })
+          );
+          return res.status(400).json({
+            error: "Module must have a valid manifest with id and name",
+          });
+        }
+
+        // Register and load the module
+        registry.register(instance);
+        const loadResult = await registry.load(instance.manifest.id, {
+          autoStart: true,
+          enabled: true,
+        });
+
+        if (!loadResult.success) {
+          return res.status(500).json({
+            error: `Module installed but failed to load: ${loadResult.error}`,
+            installed: true,
+            loaded: false,
+          });
+        }
+
+        events.emit("kernel:module-installed", {
+          moduleId: instance.manifest.id,
+          name: instance.manifest.name,
+          version: instance.manifest.version,
+          timestamp: new Date(),
+        });
+
+        res.json({
+          success: true,
+          moduleId: instance.manifest.id,
+          name: instance.manifest.name,
+          version: instance.manifest.version,
+          message: `Module '${instance.manifest.name}' installed and loaded successfully`,
+        });
+      } catch (loadError) {
+        // Clean up on load failure
+        await import("fs/promises").then((fs) =>
+          fs.rm(moduleDir, { recursive: true, force: true })
+        );
+        throw loadError;
+      }
+    } catch (error) {
+      log.error({ moduleId, error }, "Failed to install module");
+      res.status(500).json({
+        error: error instanceof Error ? error.message : "Failed to install module",
+      });
+    }
+    */
+  });
+
+  // DELETE /api/kernel/modules/:id/uninstall - Uninstall a module
+  app.delete("/api/kernel/modules/:id/uninstall", async (req, res) => {
+    const moduleId = req.params.id;
+    const entry = registry.get(moduleId);
+
+    if (!entry) {
+      return res.status(404).json({ error: "Module not found" });
+    }
+
+    // Prevent uninstalling core or kernel modules
+    if (entry.module.manifest.tier === "core" || entry.module.manifest.tier === "kernel") {
+      if (!req.body.force) {
+        return res.status(400).json({
+          error: `Cannot uninstall ${entry.module.manifest.tier} module without force flag`,
+          hint: "Add { force: true } to request body",
+        });
+      }
+    }
+
+    try {
+      // Disable the module first
+      if (entry.state === "running") {
+        await registry.disable(moduleId);
+      }
+
+      // Unregister from registry
+      (registry as any).unregister?.(moduleId);
+
+      // Remove from moduleConfigs
+      moduleConfigs.delete(moduleId);
+
+      // Remove persisted config
+      try {
+        await moduleConfigStorage.deleteModuleConfig(moduleId);
+      } catch {
+        // Ignore if config doesn't exist
+      }
+
+      // Remove module directory (only for third-party modules)
+      if (entry.module.manifest.tier === "third-party") {
+        const moduleDir = path.join("./server/modules", moduleId);
+        await import("fs/promises").then((fs) =>
+          fs.rm(moduleDir, { recursive: true, force: true })
+        );
+      }
+
+      events.emit("kernel:module-uninstalled", {
+        moduleId,
+        timestamp: new Date(),
+      });
+
+      res.json({
+        success: true,
+        message: `Module '${moduleId}' uninstalled successfully`,
+      });
+    } catch (error) {
+      log.error({ moduleId, error }, "Failed to uninstall module");
+      res.status(500).json({
+        error: error instanceof Error ? error.message : "Failed to uninstall module",
+      });
+    }
+  });
+
   log.debug("Kernel admin routes registered");
+}
+
+/**
+ * Get Zod type name for schema extraction.
+ */
+function getZodTypeName(schema: any): string {
+  const typeName = schema?._def?.typeName;
+  switch (typeName) {
+    case "ZodString":
+      return "string";
+    case "ZodNumber":
+      return "number";
+    case "ZodBoolean":
+      return "boolean";
+    case "ZodArray":
+      return "array";
+    case "ZodEnum":
+      return "enum";
+    case "ZodOptional":
+      return getZodTypeName(schema._def.innerType);
+    case "ZodDefault":
+      return getZodTypeName(schema._def.innerType);
+    default:
+      return "unknown";
+  }
 }
 
 // =============================================================================

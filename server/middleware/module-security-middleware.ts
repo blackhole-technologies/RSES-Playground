@@ -23,7 +23,7 @@ import {
   queryAuditEvents,
   getModuleSecuritySummary,
 } from "../security/module-security";
-import type { ModuleCapability, TenantContext } from "@docs/security/module-security-architecture";
+import type { ModuleCapability, TenantContext } from "../security/module-security-architecture";
 
 // =============================================================================
 // TYPE EXTENSIONS

@@ -4,6 +4,7 @@ import {
   projects,
   configVersions,
   activityLog,
+  moduleConfigs,
   type InsertConfig,
   type Config,
   type InsertProject,
@@ -12,6 +13,8 @@ import {
   type ConfigVersion,
   type InsertActivityLogEntry,
   type ActivityLogEntry,
+  type InsertModuleConfig,
+  type ModuleConfig,
 } from "@shared/schema";
 import { eq, desc, sql, count, and, gte, lte, inArray, asc } from "drizzle-orm";
 
@@ -386,3 +389,54 @@ export class DatabaseActivityStorage implements ActivityStorage {
 }
 
 export const activityStorage = new DatabaseActivityStorage();
+
+// === Module Config Storage (Phase 6 - Kernel Config Persistence) ===
+
+export interface ModuleConfigStorage {
+  getModuleConfig(moduleId: string): Promise<ModuleConfig | undefined>;
+  getAllModuleConfigs(): Promise<ModuleConfig[]>;
+  saveModuleConfig(moduleId: string, config: Record<string, unknown>): Promise<ModuleConfig>;
+  deleteModuleConfig(moduleId: string): Promise<void>;
+}
+
+export class DatabaseModuleConfigStorage implements ModuleConfigStorage {
+  async getModuleConfig(moduleId: string): Promise<ModuleConfig | undefined> {
+    const [result] = await db
+      .select()
+      .from(moduleConfigs)
+      .where(eq(moduleConfigs.moduleId, moduleId));
+    return result;
+  }
+
+  async getAllModuleConfigs(): Promise<ModuleConfig[]> {
+    return db.select().from(moduleConfigs).orderBy(asc(moduleConfigs.moduleId));
+  }
+
+  async saveModuleConfig(
+    moduleId: string,
+    config: Record<string, unknown>
+  ): Promise<ModuleConfig> {
+    const existing = await this.getModuleConfig(moduleId);
+
+    if (existing) {
+      const [updated] = await db
+        .update(moduleConfigs)
+        .set({ config, updatedAt: new Date() })
+        .where(eq(moduleConfigs.moduleId, moduleId))
+        .returning();
+      return updated;
+    }
+
+    const [created] = await db
+      .insert(moduleConfigs)
+      .values({ moduleId, config })
+      .returning();
+    return created;
+  }
+
+  async deleteModuleConfig(moduleId: string): Promise<void> {
+    await db.delete(moduleConfigs).where(eq(moduleConfigs.moduleId, moduleId));
+  }
+}
+
+export const moduleConfigStorage = new DatabaseModuleConfigStorage();

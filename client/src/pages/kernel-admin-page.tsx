@@ -22,12 +22,17 @@ import {
   useKernelEvents,
   useEnableModule,
   useDisableModule,
+  useModuleConfig,
+  useUpdateModuleConfig,
+  useInstallModule,
+  useUninstallModule,
   useKernelAvailable,
   getModuleStateColor,
   getHealthColor,
   getTierColor,
   type KernelModuleSummary,
   type ModuleTier,
+  type ModuleConfigField,
 } from "@/hooks/use-kernel";
 import { useKernelEventsWS, type KernelEvent } from "@/hooks/use-websocket";
 import { useToast } from "@/hooks/use-toast";
@@ -36,6 +41,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Sheet,
   SheetContent,
@@ -73,7 +80,14 @@ import {
   Wifi,
   WifiOff,
   Trash2,
+  Save,
+  Settings,
+  Upload,
+  Package,
+  FileCode,
+  Database,
 } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
 // =============================================================================
@@ -430,6 +444,221 @@ function ModuleList({ tier, onSelect }: ModuleListProps) {
 }
 
 // =============================================================================
+// MODULE CONFIG EDITOR
+// =============================================================================
+
+interface ModuleConfigEditorProps {
+  moduleId: string;
+}
+
+function ModuleConfigEditor({ moduleId }: ModuleConfigEditorProps) {
+  const { data: configData, isLoading, error } = useModuleConfig(moduleId);
+  const updateConfig = useUpdateModuleConfig();
+  const { toast } = useToast();
+  const [formValues, setFormValues] = useState<Record<string, unknown>>({});
+  const [isDirty, setIsDirty] = useState(false);
+
+  // Initialize form values when config data loads
+  useEffect(() => {
+    if (configData?.config) {
+      setFormValues(configData.config);
+      setIsDirty(false);
+    }
+  }, [configData?.config]);
+
+  const handleFieldChange = (name: string, value: unknown) => {
+    setFormValues((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
+    setIsDirty(true);
+  };
+
+  const handleSave = () => {
+    updateConfig.mutate(
+      { moduleId, config: formValues },
+      {
+        onSuccess: (result) => {
+          setIsDirty(false);
+          toast({
+            title: result.hotReloaded ? "Config Applied" : "Config Saved",
+            description: result.message,
+          });
+        },
+        onError: (error) => {
+          toast({
+            title: "Failed to save config",
+            description: error instanceof Error ? error.message : "An error occurred",
+            variant: "destructive",
+          });
+        },
+      }
+    );
+  };
+
+  if (isLoading) {
+    return (
+      <div className="space-y-3">
+        <Skeleton className="h-8 w-full" />
+        <Skeleton className="h-8 w-full" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="text-sm text-muted-foreground">
+        Failed to load configuration
+      </div>
+    );
+  }
+
+  if (!configData) {
+    return null;
+  }
+
+  const { schema, hasSchema, supportsHotReload } = configData;
+
+  // If no schema, show raw JSON editor
+  if (!hasSchema || schema.length === 0) {
+    return (
+      <div className="space-y-4">
+        <div className="text-sm text-muted-foreground">
+          This module does not define a configuration schema. You can edit the
+          raw configuration below.
+        </div>
+        <textarea
+          className="w-full h-32 font-mono text-xs p-2 border rounded bg-muted"
+          value={JSON.stringify(formValues, null, 2)}
+          onChange={(e) => {
+            try {
+              const parsed = JSON.parse(e.target.value);
+              setFormValues(parsed);
+              setIsDirty(true);
+            } catch {
+              // Invalid JSON, ignore
+            }
+          }}
+        />
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-muted-foreground">
+            {supportsHotReload ? (
+              <span className="text-green-600">Supports hot-reload</span>
+            ) : (
+              "Restart required after changes"
+            )}
+          </span>
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={!isDirty || updateConfig.isPending}
+          >
+            {updateConfig.isPending ? (
+              <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
+            ) : (
+              <Save className="h-4 w-4 mr-1" />
+            )}
+            Save
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // Render schema-based form
+  return (
+    <div className="space-y-4">
+      {schema.map((field) => (
+        <div key={field.name} className="space-y-1">
+          <Label htmlFor={field.name} className="text-sm font-medium">
+            {field.name}
+            {field.required && <span className="text-red-500 ml-1">*</span>}
+          </Label>
+          {renderConfigField(field, formValues[field.name], (value) =>
+            handleFieldChange(field.name, value)
+          )}
+          {field.description && (
+            <p className="text-xs text-muted-foreground">{field.description}</p>
+          )}
+        </div>
+      ))}
+
+      <div className="flex items-center justify-between pt-2">
+        <span className="text-xs text-muted-foreground">
+          {supportsHotReload ? (
+            <span className="text-green-600">Supports hot-reload</span>
+          ) : (
+            "Restart required after changes"
+          )}
+        </span>
+        <Button
+          size="sm"
+          onClick={handleSave}
+          disabled={!isDirty || updateConfig.isPending}
+        >
+          {updateConfig.isPending ? (
+            <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
+          ) : (
+            <Save className="h-4 w-4 mr-1" />
+          )}
+          Save
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Render a config field based on its type.
+ */
+function renderConfigField(
+  field: ModuleConfigField,
+  value: unknown,
+  onChange: (value: unknown) => void
+) {
+  switch (field.type) {
+    case "boolean":
+      return (
+        <div className="flex items-center gap-2">
+          <Switch
+            id={field.name}
+            checked={Boolean(value ?? field.default)}
+            onCheckedChange={onChange}
+          />
+          <span className="text-sm text-muted-foreground">
+            {value ?? field.default ? "Enabled" : "Disabled"}
+          </span>
+        </div>
+      );
+
+    case "number":
+      return (
+        <Input
+          id={field.name}
+          type="number"
+          value={String(value ?? field.default ?? "")}
+          onChange={(e) => {
+            const val = e.target.value;
+            onChange(val === "" ? undefined : Number(val));
+          }}
+          className="max-w-[200px]"
+        />
+      );
+
+    case "string":
+    default:
+      return (
+        <Input
+          id={field.name}
+          type="text"
+          value={String(value ?? field.default ?? "")}
+          onChange={(e) => onChange(e.target.value || undefined)}
+        />
+      );
+  }
+}
+
+// =============================================================================
 // MODULE DETAIL SHEET
 // =============================================================================
 
@@ -572,6 +801,15 @@ function ModuleDetailSheet({ moduleId, onClose }: ModuleDetailSheetProps) {
                   )}
                 </div>
               )}
+
+              {/* Configuration */}
+              <div>
+                <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
+                  <Settings className="h-4 w-4" />
+                  Configuration
+                </h4>
+                <ModuleConfigEditor moduleId={module.id} />
+              </div>
             </div>
           </ScrollArea>
         ) : (
@@ -1103,6 +1341,179 @@ function EventLog() {
 }
 
 // =============================================================================
+// MODULE INSTALLER COMPONENT
+// =============================================================================
+
+const MODULE_TEMPLATE = `import type { IModule, ModuleManifest, ModuleContext } from "../kernel/types";
+import { createModuleLogger } from "../logger";
+
+const log = createModuleLogger("my-module");
+
+export class MyModule implements IModule {
+  manifest: ModuleManifest = {
+    id: "my-module",
+    name: "My Module",
+    version: "1.0.0",
+    description: "A custom module",
+    tier: "third-party",
+  };
+
+  async initialize(ctx: ModuleContext): Promise<void> {
+    log.info("Module initialized");
+  }
+
+  async start(): Promise<void> {
+    log.info("Module started");
+  }
+
+  async stop(): Promise<void> {
+    log.info("Module stopped");
+  }
+
+  async healthCheck() {
+    return { status: "healthy" as const, message: "OK" };
+  }
+}
+
+export default MyModule;
+`;
+
+function ModuleInstaller() {
+  const [moduleId, setModuleId] = useState("");
+  const [moduleCode, setModuleCode] = useState(MODULE_TEMPLATE);
+  const [error, setError] = useState<string | null>(null);
+  const installModule = useInstallModule();
+  const { toast } = useToast();
+
+  const handleInstall = () => {
+    setError(null);
+
+    if (!moduleId.trim()) {
+      setError("Module ID is required");
+      return;
+    }
+
+    if (!/^[a-z][a-z0-9-]*$/.test(moduleId)) {
+      setError("Module ID must start with lowercase letter, contain only lowercase letters, numbers, and hyphens");
+      return;
+    }
+
+    if (!moduleCode.trim()) {
+      setError("Module code is required");
+      return;
+    }
+
+    installModule.mutate(
+      { moduleId: moduleId.trim(), moduleCode },
+      {
+        onSuccess: (result) => {
+          toast({
+            title: "Module Installed",
+            description: result.message,
+          });
+          setModuleId("");
+          setModuleCode(MODULE_TEMPLATE);
+        },
+        onError: (err) => {
+          setError(err instanceof Error ? err.message : "Installation failed");
+          toast({
+            title: "Installation Failed",
+            description: err instanceof Error ? err.message : "Unknown error",
+            variant: "destructive",
+          });
+        },
+      }
+    );
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-start gap-4">
+        <div className="flex-1 space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="module-id" className="flex items-center gap-2">
+              <Package className="h-4 w-4" />
+              Module ID
+            </Label>
+            <Input
+              id="module-id"
+              placeholder="my-custom-module"
+              value={moduleId}
+              onChange={(e) => setModuleId(e.target.value)}
+              className="max-w-[300px]"
+            />
+            <p className="text-xs text-muted-foreground">
+              Lowercase letters, numbers, and hyphens only. Must start with a letter.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="module-code" className="flex items-center gap-2">
+              <FileCode className="h-4 w-4" />
+              Module Code (TypeScript)
+            </Label>
+            <Textarea
+              id="module-code"
+              className="font-mono text-sm h-[400px]"
+              value={moduleCode}
+              onChange={(e) => setModuleCode(e.target.value)}
+              placeholder="Paste your module code here..."
+            />
+          </div>
+
+          {error && (
+            <div className="flex items-center gap-2 text-red-500 text-sm">
+              <XCircle className="h-4 w-4" />
+              {error}
+            </div>
+          )}
+
+          <Button
+            onClick={handleInstall}
+            disabled={installModule.isPending}
+            className="gap-2"
+          >
+            {installModule.isPending ? (
+              <RefreshCw className="h-4 w-4 animate-spin" />
+            ) : (
+              <Upload className="h-4 w-4" />
+            )}
+            Install Module
+          </Button>
+        </div>
+
+        <Card className="w-[300px]">
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Database className="h-4 w-4" />
+              Installation Notes
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-xs text-muted-foreground space-y-2">
+            <p>
+              <strong>Requirements:</strong>
+            </p>
+            <ul className="list-disc list-inside space-y-1">
+              <li>Module must implement IModule interface</li>
+              <li>Must export class as default or named export</li>
+              <li>Manifest must include id, name, version</li>
+              <li>tier should be "third-party"</li>
+            </ul>
+            <p className="mt-4">
+              <strong>Config Persistence:</strong>
+            </p>
+            <p>
+              Module configurations are now persisted to the database and will
+              survive server restarts.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
 // MAIN PAGE COMPONENT
 // =============================================================================
 
@@ -1161,6 +1572,10 @@ export default function KernelAdminPage() {
           <TabsTrigger value="core">Core</TabsTrigger>
           <TabsTrigger value="optional">Optional</TabsTrigger>
           <TabsTrigger value="dependencies">Dependencies</TabsTrigger>
+          <TabsTrigger value="install" className="flex items-center gap-1">
+            <Upload className="h-3 w-3" />
+            Install
+          </TabsTrigger>
           <TabsTrigger value="events" className="flex items-center gap-1">
             <Radio className="h-3 w-3" />
             Live Events
@@ -1189,6 +1604,20 @@ export default function KernelAdminPage() {
             </CardHeader>
             <CardContent>
               <DependencyGraph onSelect={setSelectedModuleId} />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="install">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Upload className="h-5 w-5" />
+                Install Module
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ModuleInstaller />
             </CardContent>
           </Card>
         </TabsContent>

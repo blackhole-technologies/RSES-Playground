@@ -105,6 +105,28 @@ export interface KernelEvent {
   correlationId?: string;
 }
 
+/**
+ * Module config schema field info.
+ */
+export interface ModuleConfigField {
+  name: string;
+  type: "string" | "number" | "boolean" | "array" | "enum" | "unknown";
+  required: boolean;
+  default?: unknown;
+  description?: string;
+}
+
+/**
+ * Module configuration response.
+ */
+export interface ModuleConfigResponse {
+  moduleId: string;
+  config: Record<string, unknown>;
+  schema: ModuleConfigField[];
+  hasSchema: boolean;
+  supportsHotReload: boolean;
+}
+
 // =============================================================================
 // API PATHS
 // =============================================================================
@@ -112,8 +134,11 @@ export interface KernelEvent {
 const API_PATHS = {
   modules: "/api/kernel/modules",
   module: (id: string) => `/api/kernel/modules/${id}`,
+  moduleConfig: (id: string) => `/api/kernel/modules/${id}/config`,
   enable: (id: string) => `/api/kernel/modules/${id}/enable`,
   disable: (id: string) => `/api/kernel/modules/${id}/disable`,
+  install: "/api/kernel/modules/install",
+  uninstall: (id: string) => `/api/kernel/modules/${id}/uninstall`,
   health: "/api/kernel/health",
   events: "/api/kernel/events",
 } as const;
@@ -126,6 +151,7 @@ export const kernelKeys = {
   all: ["kernel"] as const,
   modules: () => [...kernelKeys.all, "modules"] as const,
   module: (id: string) => [...kernelKeys.modules(), id] as const,
+  moduleConfig: (id: string) => [...kernelKeys.modules(), id, "config"] as const,
   health: () => [...kernelKeys.all, "health"] as const,
   events: (limit?: number) => [...kernelKeys.all, "events", limit] as const,
 };
@@ -267,6 +293,114 @@ export function useDisableModule() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: kernelKeys.modules() });
       queryClient.invalidateQueries({ queryKey: kernelKeys.health() });
+    },
+  });
+}
+
+/**
+ * Fetch module configuration.
+ */
+export function useModuleConfig(id: string | null) {
+  return useQuery({
+    queryKey: kernelKeys.moduleConfig(id || ""),
+    queryFn: async () => {
+      if (!id) return null;
+      return fetchJson<ModuleConfigResponse>(API_PATHS.moduleConfig(id));
+    },
+    enabled: !!id,
+  });
+}
+
+/**
+ * Update module configuration.
+ */
+export function useUpdateModuleConfig() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      moduleId,
+      config,
+    }: {
+      moduleId: string;
+      config: Record<string, unknown>;
+    }) => {
+      return fetchJson<{
+        success: boolean;
+        config: Record<string, unknown>;
+        hotReloaded: boolean;
+        persisted: boolean;
+        message: string;
+      }>(API_PATHS.moduleConfig(moduleId), {
+        method: "PUT",
+        body: JSON.stringify({ config }),
+      });
+    },
+    onSuccess: (_, { moduleId }) => {
+      queryClient.invalidateQueries({ queryKey: kernelKeys.moduleConfig(moduleId) });
+      queryClient.invalidateQueries({ queryKey: kernelKeys.module(moduleId) });
+    },
+  });
+}
+
+/**
+ * Install a new module.
+ */
+export function useInstallModule() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      moduleId,
+      moduleCode,
+    }: {
+      moduleId: string;
+      moduleCode: string;
+    }) => {
+      return fetchJson<{
+        success: boolean;
+        moduleId: string;
+        name: string;
+        version: string;
+        message: string;
+      }>(API_PATHS.install, {
+        method: "POST",
+        body: JSON.stringify({ moduleId, moduleCode }),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: kernelKeys.modules() });
+      queryClient.invalidateQueries({ queryKey: kernelKeys.health() });
+    },
+  });
+}
+
+/**
+ * Uninstall a module.
+ */
+export function useUninstallModule() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      moduleId,
+      force = false,
+    }: {
+      moduleId: string;
+      force?: boolean;
+    }) => {
+      return fetchJson<{
+        success: boolean;
+        message: string;
+      }>(API_PATHS.uninstall(moduleId), {
+        method: "DELETE",
+        body: JSON.stringify({ force }),
+      });
+    },
+    onSuccess: (_, { moduleId }) => {
+      queryClient.invalidateQueries({ queryKey: kernelKeys.modules() });
+      queryClient.invalidateQueries({ queryKey: kernelKeys.health() });
+      queryClient.invalidateQueries({ queryKey: kernelKeys.module(moduleId) });
     },
   });
 }
