@@ -32,115 +32,10 @@ import {
 } from "./DashboardWidgets";
 
 import { useFeatureFlags, useRolloutHistory } from "../hooks/use-feature-flags";
+import { useSites } from "../hooks/use-sites";
 import type { FeatureFlag, SiteConfig, RolloutEvent, SiteAction } from "@shared/admin/types";
 import type { ViewMode, FeatureFlagFilterState, ConfirmationModalProps } from "../types";
 
-// =============================================================================
-// MOCK DATA (Replace with actual API calls)
-// =============================================================================
-
-const mockSites: SiteConfig[] = [
-  {
-    id: "site-1",
-    name: "Production US",
-    domain: "app.example.com",
-    environment: "production",
-    region: "us-east-1",
-    version: "2.5.1",
-    healthStatus: "healthy",
-    lastHealthCheck: new Date().toISOString(),
-    uptime: 864000,
-    enabledFeatures: ["feature_ai_suggestions", "feature_advanced_taxonomy"],
-    featureOverrides: {},
-    resourceUsage: {
-      cpuPercent: 45,
-      memoryPercent: 62,
-      diskPercent: 38,
-      networkInMbps: 125,
-      networkOutMbps: 89,
-      timestamp: new Date().toISOString(),
-    },
-    resourceHistory: [],
-    createdAt: "2025-01-01T00:00:00Z",
-    updatedAt: new Date().toISOString(),
-    tags: ["primary", "customer-facing"],
-  },
-  {
-    id: "site-2",
-    name: "Production EU",
-    domain: "eu.app.example.com",
-    environment: "production",
-    region: "eu-west-1",
-    version: "2.5.1",
-    healthStatus: "healthy",
-    lastHealthCheck: new Date().toISOString(),
-    uptime: 432000,
-    enabledFeatures: ["feature_ai_suggestions"],
-    featureOverrides: {},
-    resourceUsage: {
-      cpuPercent: 32,
-      memoryPercent: 48,
-      diskPercent: 25,
-      networkInMbps: 78,
-      networkOutMbps: 45,
-      timestamp: new Date().toISOString(),
-    },
-    resourceHistory: [],
-    createdAt: "2025-02-01T00:00:00Z",
-    updatedAt: new Date().toISOString(),
-    tags: ["gdpr-compliant"],
-  },
-  {
-    id: "site-3",
-    name: "Staging",
-    domain: "staging.example.com",
-    environment: "staging",
-    region: "us-west-2",
-    version: "2.6.0-beta",
-    healthStatus: "degraded",
-    lastHealthCheck: new Date().toISOString(),
-    uptime: 86400,
-    enabledFeatures: ["feature_ai_suggestions", "beta_collaborative_editing"],
-    featureOverrides: {},
-    resourceUsage: {
-      cpuPercent: 78,
-      memoryPercent: 85,
-      diskPercent: 42,
-      networkInMbps: 45,
-      networkOutMbps: 23,
-      timestamp: new Date().toISOString(),
-    },
-    resourceHistory: [],
-    createdAt: "2025-06-01T00:00:00Z",
-    updatedAt: new Date().toISOString(),
-    tags: ["testing"],
-  },
-  {
-    id: "site-4",
-    name: "Development",
-    domain: "dev.example.com",
-    environment: "development",
-    region: "us-west-2",
-    version: "2.7.0-dev",
-    healthStatus: "healthy",
-    lastHealthCheck: new Date().toISOString(),
-    uptime: 3600,
-    enabledFeatures: ["feature_ai_suggestions", "beta_collaborative_editing", "experimental_quantum_taxonomy"],
-    featureOverrides: {},
-    resourceUsage: {
-      cpuPercent: 15,
-      memoryPercent: 28,
-      diskPercent: 18,
-      networkInMbps: 12,
-      networkOutMbps: 8,
-      timestamp: new Date().toISOString(),
-    },
-    resourceHistory: [],
-    createdAt: "2025-10-01T00:00:00Z",
-    updatedAt: new Date().toISOString(),
-    tags: ["internal"],
-  },
-];
 
 // =============================================================================
 // COMPONENT
@@ -192,8 +87,14 @@ export function AdminDashboard() {
     onConfirm: () => void;
   } | null>(null);
 
-  // Sites state (using mock data for now)
-  const [sites] = useState<SiteConfig[]>(mockSites);
+  // Sites state - connected to real API
+  const {
+    sites,
+    loading: sitesLoading,
+    error: sitesError,
+    refreshSites,
+    performAction: performSiteAction,
+  } = useSites({ autoLoad: true });
 
   // Handlers
   const handleFilterChange = useCallback((changes: Partial<FeatureFlagFilterState>) => {
@@ -286,12 +187,20 @@ export function AdminDashboard() {
   }, [disableFlag, toast]);
 
   const handleSiteAction = useCallback(async (siteId: string, action: SiteAction) => {
-    toast({
-      title: "Action triggered",
-      description: `${action} requested for site ${siteId}`,
-    });
-    // TODO: Implement actual site actions
-  }, [toast]);
+    try {
+      await performSiteAction(siteId, action);
+      toast({
+        title: "Action completed",
+        description: `${action} completed for site ${siteId}`,
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to perform action",
+        variant: "destructive",
+      });
+    }
+  }, [performSiteAction, toast]);
 
   // Get active rollouts for widget
   const activeRollouts = flags

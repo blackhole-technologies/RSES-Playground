@@ -127,6 +127,7 @@ import {
   createDnsProviderAdapter,
 } from "./services/adapters";
 import featureFlagRoutes from "./services/feature-flags/routes";
+import adminSitesRoutes from "./routes/admin-sites";
 import { DomainRouter } from "./multisite/routing/domain-router";
 import {
   createTenantIsolationMiddleware,
@@ -174,6 +175,10 @@ app.use("/api/rses", siteContextMiddleware, tenantIsolationMiddleware, siteIsola
 // Feature flags admin API routes
 // Provides CRUD operations, evaluation, statistics, and rollout history
 app.use("/api/admin", featureFlagRoutes);
+
+// Sites admin API routes
+// Provides multi-site management, health monitoring, and bulk operations
+app.use("/api/admin/sites", adminSitesRoutes);
 
 // Export domain router for use by other services
 export { domainRouter };
