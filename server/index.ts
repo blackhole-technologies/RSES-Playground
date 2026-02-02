@@ -137,6 +137,7 @@ import {
   createDnsProviderAdapter,
 } from "./services/adapters";
 import featureFlagRoutes from "./services/feature-flags/routes";
+import featureFlagSiteRoutes from "./services/feature-flags/site-routes";
 import adminSitesRoutes from "./routes/admin-sites";
 import adminUsersRoutes from "./routes/admin-users";
 import { DomainRouter } from "./multisite/routing/domain-router";
@@ -194,6 +195,10 @@ app.use("/api/admin/sites", adminSitesRoutes);
 // Users admin API routes
 // Provides user CRUD, role management, and session management
 app.use("/api/admin/users", adminUsersRoutes);
+
+// Site-scoped feature flags API routes
+// Provides tenant-isolated feature flag operations
+app.use("/api/site/feature-flags", featureFlagSiteRoutes);
 
 // Export domain router for use by other services
 export { domainRouter };

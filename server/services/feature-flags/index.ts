@@ -945,3 +945,10 @@ export * from "./types";
 export { FeatureDependencyResolver } from "./dependency-resolver";
 export { FeatureFlagEvaluator, TargetingRuleEvaluator, PercentageRolloutEvaluator } from "./evaluator";
 export { FeatureFlagEdgeCache, getEdgeCache, resetEdgeCache } from "./edge-cache";
+export {
+  SiteScopedFeatureFlagsService,
+  getSiteScopedFeatureFlagsService,
+  resetSiteScopedFeatureFlagsService,
+  type SiteScopedFeatureFlag,
+  type FeatureFlagScope,
+} from "./site-scoped";
