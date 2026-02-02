@@ -12,7 +12,12 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:security": "vitest run tests/security",
-    "test:ui": "vitest run --config vitest.config.ui.ts"
+    "test:ui": "vitest run --config vitest.config.ui.ts",
+    "test:load": "k6 run tests/load/load.js",
+    "test:smoke": "k6 run tests/load/smoke.js",
+    "test:stress": "k6 run tests/load/stress.js",
+    "test:soak": "k6 run tests/load/soak.js",
+    "profile": "./scripts/profile.sh"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^7.3.4",
