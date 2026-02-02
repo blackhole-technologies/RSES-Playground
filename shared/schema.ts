@@ -267,3 +267,37 @@ export const featureRolloutHistory = pgTable("feature_rollout_history", {
 });
 
 export type FeatureRolloutHistoryRow = typeof featureRolloutHistory.$inferSelect;
+
+// === Sites Table (Phase 10 - Multi-Site Management) ===
+
+export const sites = pgTable("sites", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  domain: text("domain").notNull(),
+  environment: text("environment").$type<"development" | "staging" | "production">().notNull(),
+  region: text("region").notNull(),
+  version: text("version").notNull(),
+  healthStatus: text("health_status").$type<"healthy" | "degraded" | "unhealthy" | "unknown">().default("unknown").notNull(),
+  lastHealthCheck: timestamp("last_health_check").defaultNow(),
+  uptime: integer("uptime").default(0).notNull(), // stored as percentage * 100 for precision
+  resourceUsage: jsonb("resource_usage").$type<{
+    cpuPercent: number;
+    memoryPercent: number;
+    diskPercent: number;
+    networkInMbps: number;
+    networkOutMbps: number;
+    timestamp: string;
+  }>(),
+  enabledFeatures: jsonb("enabled_features").$type<string[]>().default([]),
+  featureOverrides: jsonb("feature_overrides").$type<Record<string, boolean>>().default({}),
+  rsesConfigId: integer("rses_config_id"),
+  rsesConfigVersion: integer("rses_config_version"),
+  owner: text("owner"),
+  tags: jsonb("tags").$type<string[]>().default([]),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  lastDeployedAt: timestamp("last_deployed_at"),
+});
+
+export type SiteRow = typeof sites.$inferSelect;
+export type InsertSiteRow = typeof sites.$inferInsert;

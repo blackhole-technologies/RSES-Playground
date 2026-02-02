@@ -5,6 +5,7 @@
  * @created 2026-02-02
  *
  * Provides REST API endpoints for multi-site administration.
+ * Uses PostgreSQL storage via Drizzle ORM.
  */
 
 import { Router, Request, Response, NextFunction } from "express";
@@ -18,153 +19,10 @@ import type {
 import { requireAuth, requireAdmin } from "../auth/session";
 import { createModuleLogger } from "../logger";
 import { getFeatureFlagsService } from "../services/feature-flags";
+import { getSitesStorage } from "../services/sites/pg-storage";
 
 const log = createModuleLogger("admin-sites-api");
 const router = Router();
-
-// =============================================================================
-// IN-MEMORY SITE STORE (Replace with database in production)
-// =============================================================================
-
-// Demo sites for development - mirrors what was in AdminDashboard.tsx
-const siteStore = new Map<string, SiteConfig>([
-  [
-    "site-1",
-    {
-      id: "site-1",
-      name: "Production US",
-      domain: "us.example.com",
-      environment: "production",
-      region: "us-east-1",
-      version: "2.4.1",
-      healthStatus: "healthy",
-      lastHealthCheck: new Date().toISOString(),
-      uptime: 99.99,
-      resourceUsage: {
-        cpuPercent: 45,
-        memoryPercent: 62,
-        diskPercent: 38,
-        networkInMbps: 125,
-        networkOutMbps: 89,
-        timestamp: new Date().toISOString(),
-      },
-      resourceHistory: [],
-      enabledFeatures: [
-        "core_authentication",
-        "core_rses_engine",
-        "feature_ai_suggestions",
-        "feature_advanced_taxonomy",
-      ],
-      featureOverrides: {},
-      createdAt: "2024-01-15T00:00:00Z",
-      updatedAt: new Date().toISOString(),
-      tags: ["production", "primary"],
-    },
-  ],
-  [
-    "site-2",
-    {
-      id: "site-2",
-      name: "Production EU",
-      domain: "eu.example.com",
-      environment: "production",
-      region: "eu-west-1",
-      version: "2.4.1",
-      healthStatus: "healthy",
-      lastHealthCheck: new Date().toISOString(),
-      uptime: 99.95,
-      resourceUsage: {
-        cpuPercent: 38,
-        memoryPercent: 55,
-        diskPercent: 42,
-        networkInMbps: 98,
-        networkOutMbps: 67,
-        timestamp: new Date().toISOString(),
-      },
-      resourceHistory: [],
-      enabledFeatures: [
-        "core_authentication",
-        "core_rses_engine",
-        "feature_advanced_taxonomy",
-      ],
-      featureOverrides: { feature_ai_suggestions: false },
-      createdAt: "2024-02-01T00:00:00Z",
-      updatedAt: new Date().toISOString(),
-      tags: ["production", "gdpr"],
-    },
-  ],
-  [
-    "site-3",
-    {
-      id: "site-3",
-      name: "Staging",
-      domain: "staging.example.com",
-      environment: "staging",
-      region: "us-east-1",
-      version: "2.5.0-beta",
-      healthStatus: "degraded",
-      lastHealthCheck: new Date().toISOString(),
-      uptime: 98.5,
-      resourceUsage: {
-        cpuPercent: 72,
-        memoryPercent: 81,
-        diskPercent: 55,
-        networkInMbps: 45,
-        networkOutMbps: 32,
-        timestamp: new Date().toISOString(),
-      },
-      resourceHistory: [],
-      enabledFeatures: [
-        "core_authentication",
-        "core_rses_engine",
-        "feature_ai_suggestions",
-        "feature_advanced_taxonomy",
-        "beta_collaborative_editing",
-        "beta_version_intelligence",
-      ],
-      featureOverrides: {},
-      createdAt: "2024-03-01T00:00:00Z",
-      updatedAt: new Date().toISOString(),
-      tags: ["staging", "beta"],
-    },
-  ],
-  [
-    "site-4",
-    {
-      id: "site-4",
-      name: "Development",
-      domain: "dev.example.com",
-      environment: "development",
-      region: "us-east-1",
-      version: "2.6.0-dev",
-      healthStatus: "healthy",
-      lastHealthCheck: new Date().toISOString(),
-      uptime: 95.0,
-      resourceUsage: {
-        cpuPercent: 25,
-        memoryPercent: 35,
-        diskPercent: 22,
-        networkInMbps: 12,
-        networkOutMbps: 8,
-        timestamp: new Date().toISOString(),
-      },
-      resourceHistory: [],
-      enabledFeatures: [
-        "core_authentication",
-        "core_rses_engine",
-        "feature_ai_suggestions",
-        "feature_advanced_taxonomy",
-        "beta_collaborative_editing",
-        "beta_version_intelligence",
-        "experimental_quantum_taxonomy",
-      ],
-      featureOverrides: {},
-      createdAt: "2024-04-01T00:00:00Z",
-      updatedAt: new Date().toISOString(),
-      tags: ["development", "experimental"],
-    },
-  ],
-]);
 
 // =============================================================================
 // VALIDATION SCHEMAS
@@ -221,45 +79,19 @@ router.use(requireAdmin);
 router.get("/", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const query = listSitesQuerySchema.parse(req.query);
+    const storage = getSitesStorage();
 
-    let sites = Array.from(siteStore.values());
+    const result = await storage.search({
+      search: query.search,
+      environments: query.environments?.split(","),
+      healthStatus: query.healthStatus?.split(","),
+      regions: query.regions?.split(","),
+      tags: query.tags?.split(","),
+      limit: query.limit,
+      offset: query.offset,
+    });
 
-    // Apply filters
-    if (query.search) {
-      const search = query.search.toLowerCase();
-      sites = sites.filter(
-        (s) =>
-          s.name.toLowerCase().includes(search) ||
-          s.domain.toLowerCase().includes(search)
-      );
-    }
-
-    if (query.environments) {
-      const envs = query.environments.split(",");
-      sites = sites.filter((s) => envs.includes(s.environment));
-    }
-
-    if (query.healthStatus) {
-      const statuses = query.healthStatus.split(",");
-      sites = sites.filter((s) => statuses.includes(s.healthStatus));
-    }
-
-    if (query.regions) {
-      const regions = query.regions.split(",");
-      sites = sites.filter((s) => regions.includes(s.region));
-    }
-
-    if (query.tags) {
-      const tags = query.tags.split(",");
-      sites = sites.filter((s) => s.tags.some((t) => tags.includes(t)));
-    }
-
-    const total = sites.length;
-
-    // Apply pagination
-    sites = sites.slice(query.offset, query.offset + query.limit);
-
-    res.json({ data: sites, total });
+    res.json({ data: result.sites, total: result.total });
   } catch (err) {
     next(err);
   }
@@ -271,13 +103,16 @@ router.get("/", async (req: Request, res: Response, next: NextFunction) => {
  */
 router.get("/health", async (req: Request, res: Response, next: NextFunction) => {
   try {
+    const storage = getSitesStorage();
     const siteIds = req.query.siteIds
       ? (req.query.siteIds as string).split(",")
       : undefined;
 
-    let sites = Array.from(siteStore.values());
+    let sites: SiteConfig[];
     if (siteIds) {
-      sites = sites.filter((s) => siteIds.includes(s.id));
+      sites = await storage.getByIds(siteIds);
+    } else {
+      sites = await storage.getAll();
     }
 
     const healthData = sites.map((s) => ({
@@ -301,10 +136,9 @@ router.get("/health", async (req: Request, res: Response, next: NextFunction) =>
 router.post("/compare", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { siteIds } = z.object({ siteIds: z.array(z.string()).min(2) }).parse(req.body);
+    const storage = getSitesStorage();
 
-    const sites = siteIds
-      .map((id) => siteStore.get(id))
-      .filter((s): s is SiteConfig => s !== undefined);
+    const sites = await storage.getByIds(siteIds);
 
     if (sites.length < 2) {
       return res.status(400).json({ error: "Need at least 2 valid sites to compare" });
@@ -370,19 +204,27 @@ router.post("/compare", async (req: Request, res: Response, next: NextFunction) 
 router.post("/bulk-action", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { siteIds, action } = bulkActionSchema.parse(req.body);
+    const storage = getSitesStorage();
 
     const results: Array<{ siteId: string; success: boolean; error?: string }> = [];
 
     for (const siteId of siteIds) {
-      const site = siteStore.get(siteId);
+      const site = await storage.getById(siteId);
       if (!site) {
         results.push({ siteId, success: false, error: "Site not found" });
         continue;
       }
 
-      // Simulate action
-      log.info({ siteId, action }, "Performing bulk action on site");
-      results.push({ siteId, success: true });
+      try {
+        await performAction(storage, site, action);
+        results.push({ siteId, success: true });
+      } catch (error) {
+        results.push({
+          siteId,
+          success: false,
+          error: error instanceof Error ? error.message : "Action failed",
+        });
+      }
     }
 
     res.json({ results });
@@ -398,7 +240,8 @@ router.post("/bulk-action", async (req: Request, res: Response, next: NextFuncti
 router.get("/:siteId", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { siteId } = req.params;
-    const site = siteStore.get(siteId);
+    const storage = getSitesStorage();
+    const site = await storage.getById(siteId);
 
     if (!site) {
       return res.status(404).json({ error: "Site not found" });
@@ -418,20 +261,12 @@ router.put("/:siteId", async (req: Request, res: Response, next: NextFunction) =
   try {
     const { siteId } = req.params;
     const updates = updateSiteSchema.parse(req.body);
+    const storage = getSitesStorage();
 
-    const site = siteStore.get(siteId);
-    if (!site) {
+    const updated = await storage.update(siteId, updates);
+    if (!updated) {
       return res.status(404).json({ error: "Site not found" });
     }
-
-    const updated: SiteConfig = {
-      ...site,
-      ...updates,
-      updatedAt: new Date().toISOString(),
-    };
-
-    siteStore.set(siteId, updated);
-    log.info({ siteId }, "Updated site");
 
     res.json(updated);
   } catch (err) {
@@ -447,25 +282,27 @@ router.get("/:siteId/metrics", async (req: Request, res: Response, next: NextFun
   try {
     const { siteId } = req.params;
     const period = (req.query.period as string) || "day";
+    const storage = getSitesStorage();
 
-    const site = siteStore.get(siteId);
+    const site = await storage.getById(siteId);
     if (!site) {
       return res.status(404).json({ error: "Site not found" });
     }
 
-    // Generate mock historical metrics
+    // Generate mock historical metrics (in production, this would come from a time-series DB)
     const now = Date.now();
     const intervals = period === "hour" ? 60 : period === "day" ? 24 : 7;
     const intervalMs = period === "hour" ? 60000 : period === "day" ? 3600000 : 86400000;
 
     const metrics: ResourceUsage[] = [];
     for (let i = intervals - 1; i >= 0; i--) {
+      const baseUsage = site.resourceUsage;
       metrics.push({
-        cpuPercent: Math.max(10, Math.min(90, (site.resourceUsage?.cpuPercent || 50) + (Math.random() - 0.5) * 20)),
-        memoryPercent: Math.max(20, Math.min(95, (site.resourceUsage?.memoryPercent || 60) + (Math.random() - 0.5) * 15)),
-        diskPercent: site.resourceUsage?.diskPercent || 40,
-        networkInMbps: Math.max(1, (site.resourceUsage?.networkInMbps || 50) + (Math.random() - 0.5) * 30),
-        networkOutMbps: Math.max(1, (site.resourceUsage?.networkOutMbps || 30) + (Math.random() - 0.5) * 20),
+        cpuPercent: Math.max(10, Math.min(90, (baseUsage?.cpuPercent || 50) + (Math.random() - 0.5) * 20)),
+        memoryPercent: Math.max(20, Math.min(95, (baseUsage?.memoryPercent || 60) + (Math.random() - 0.5) * 15)),
+        diskPercent: baseUsage?.diskPercent || 40,
+        networkInMbps: Math.max(1, (baseUsage?.networkInMbps || 50) + (Math.random() - 0.5) * 30),
+        networkOutMbps: Math.max(1, (baseUsage?.networkOutMbps || 30) + (Math.random() - 0.5) * 20),
         timestamp: new Date(now - i * intervalMs).toISOString(),
       });
     }
@@ -483,8 +320,9 @@ router.get("/:siteId/metrics", async (req: Request, res: Response, next: NextFun
 router.get("/:siteId/feature-overrides", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { siteId } = req.params;
+    const storage = getSitesStorage();
 
-    const site = siteStore.get(siteId);
+    const site = await storage.getById(siteId);
     if (!site) {
       return res.status(404).json({ error: "Site not found" });
     }
@@ -512,54 +350,63 @@ router.post("/:siteId/actions/:action", async (req: Request, res: Response, next
   try {
     const { siteId, action } = req.params;
     const validatedAction = siteActionSchema.parse(action);
+    const storage = getSitesStorage();
 
-    const site = siteStore.get(siteId);
+    const site = await storage.getById(siteId);
     if (!site) {
       return res.status(404).json({ error: "Site not found" });
     }
 
-    log.info({ siteId, action: validatedAction }, "Performing site action");
-
-    // Simulate action effects
-    switch (validatedAction) {
-      case "restart":
-        // Simulate restart
-        siteStore.set(siteId, {
-          ...site,
-          lastHealthCheck: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        });
-        break;
-
-      case "clear_cache":
-        // Cache would be cleared
-        break;
-
-      case "enable_maintenance":
-        siteStore.set(siteId, {
-          ...site,
-          healthStatus: "degraded",
-          updatedAt: new Date().toISOString(),
-        });
-        break;
-
-      case "disable_maintenance":
-        siteStore.set(siteId, {
-          ...site,
-          healthStatus: "healthy",
-          updatedAt: new Date().toISOString(),
-        });
-        break;
-
-      default:
-        // Other actions are simulated
-        break;
-    }
+    await performAction(storage, site, validatedAction);
 
     res.json({ success: true, action: validatedAction, siteId });
   } catch (err) {
     next(err);
   }
 });
+
+// =============================================================================
+// HELPERS
+// =============================================================================
+
+/**
+ * Perform a site action
+ */
+async function performAction(
+  storage: ReturnType<typeof getSitesStorage>,
+  site: SiteConfig,
+  action: z.infer<typeof siteActionSchema>
+): Promise<void> {
+  log.info({ siteId: site.id, action }, "Performing site action");
+
+  switch (action) {
+    case "restart":
+      await storage.updateHealthStatus(site.id, "unknown");
+      // In real implementation: trigger site restart
+      setTimeout(async () => {
+        await storage.updateHealthStatus(site.id, "healthy");
+      }, 2000);
+      break;
+
+    case "clear_cache":
+      // In real implementation: clear site cache
+      break;
+
+    case "enable_maintenance":
+      await storage.update(site.id, { healthStatus: "degraded" });
+      break;
+
+    case "disable_maintenance":
+      await storage.update(site.id, { healthStatus: "healthy" });
+      break;
+
+    case "deploy":
+    case "rollback":
+    case "sync_config":
+      // In real implementation: trigger deployment/rollback/sync
+      await storage.update(site.id, { lastDeployedAt: new Date().toISOString() });
+      break;
+  }
+}
 
 export default router;

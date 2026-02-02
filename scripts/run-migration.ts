@@ -16,15 +16,20 @@ async function runMigration() {
 
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
+  // Get migration file from command line arg or default
+  const migrationFile = process.argv[2] || "0001_add_feature_flags_tables.sql";
+
   try {
-    const migrationPath = path.join(
-      process.cwd(),
-      "migrations",
-      "0001_add_feature_flags_tables.sql"
-    );
+    const migrationPath = path.join(process.cwd(), "migrations", migrationFile);
+
+    if (!fs.existsSync(migrationPath)) {
+      console.error(`Migration file not found: ${migrationPath}`);
+      process.exit(1);
+    }
+
     const sql = fs.readFileSync(migrationPath, "utf-8");
 
-    console.log("Running migration: 0001_add_feature_flags_tables.sql");
+    console.log(`Running migration: ${migrationFile}`);
     await pool.query(sql);
     console.log("Migration completed successfully");
   } catch (error) {
