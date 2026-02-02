@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rses-cms
+  labels:
+    app.kubernetes.io/name: rses-cms
+    app.kubernetes.io/part-of: rses-cms
