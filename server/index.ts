@@ -31,6 +31,9 @@ import { getWSServer } from "./ws";
 import { getFeatureFlagsService } from "./services/feature-flags";
 import { createFeatureFlagsWSBridge } from "./services/feature-flags/ws-bridge";
 
+// OpenAPI documentation
+import openApiRoutes from "./openapi/routes";
+
 const app = express();
 
 // Check for SSL certificates
@@ -113,6 +116,9 @@ registerMetricsRoute(app);
 
 // Auth routes (before other routes)
 app.use("/api/auth", authRoutes);
+
+// OpenAPI documentation (Swagger UI)
+app.use("/api/docs", openApiRoutes);
 
 // ==========================================================================
 // PHASE 1 FOUNDATION - MULTI-SITE INFRASTRUCTURE
