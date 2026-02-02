@@ -34,6 +34,26 @@ export {
   type UseWebSocketReturn,
 } from "./use-websocket";
 
+// Feature flags real-time hooks (Phase 2)
+export {
+  useFeatureFlagsRealtime,
+  useFeatureFlagWatch,
+  useFeatureFlagInvalidation,
+  type FeatureFlagMessageType,
+  type FeatureFlagEvent,
+  type FeatureFlagEventUnion,
+  type FeatureCreatedEvent,
+  type FeatureUpdatedEvent,
+  type FeatureDeletedEvent,
+  type FeatureEnabledEvent,
+  type FeatureDisabledEvent,
+  type OverrideSetEvent,
+  type OverrideDeletedEvent,
+  type RolloutChangedEvent,
+  type TargetingUpdatedEvent,
+  type CacheInvalidatedEvent,
+} from "./use-feature-flags-realtime";
+
 // Keyboard hooks
 export {
   useKeyboardShortcut,

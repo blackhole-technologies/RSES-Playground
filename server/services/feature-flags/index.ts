@@ -767,6 +767,13 @@ export class FeatureFlagsService {
   }
 
   /**
+   * Unsubscribe from feature flag events
+   */
+  offEvent(handler: FeatureFlagEventHandler): void {
+    this.eventHandlers.delete(handler);
+  }
+
+  /**
    * Emit an event to all handlers
    */
   private emitEvent(event: FeatureFlagEvent): void {

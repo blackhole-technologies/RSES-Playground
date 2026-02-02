@@ -35,7 +35,18 @@ export type WSMessageType =
   | "kernel:module:health"
   | "kernel:system:ready"
   | "kernel:system:shutdown"
-  | "kernel:system:health";
+  | "kernel:system:health"
+  // Feature flag events
+  | "feature:created"
+  | "feature:updated"
+  | "feature:deleted"
+  | "feature:enabled"
+  | "feature:disabled"
+  | "feature:override:set"
+  | "feature:override:deleted"
+  | "feature:rollout:changed"
+  | "feature:targeting:updated"
+  | "feature:cache:invalidated";
 
 /**
  * Base WebSocket message structure.
@@ -309,6 +320,126 @@ export interface WSKernelSystemHealthMessage extends WSMessage {
   };
 }
 
+// =============================================================================
+// FEATURE FLAG EVENT MESSAGES
+// =============================================================================
+
+/**
+ * Feature flag created event.
+ */
+export interface WSFeatureCreatedMessage extends WSMessage {
+  type: "feature:created";
+  data: {
+    key: string;
+    name: string;
+    category: string;
+    globallyEnabled: boolean;
+  };
+}
+
+/**
+ * Feature flag updated event.
+ */
+export interface WSFeatureUpdatedMessage extends WSMessage {
+  type: "feature:updated";
+  data: {
+    key: string;
+    name: string;
+    changes: string[];
+    globallyEnabled: boolean;
+  };
+}
+
+/**
+ * Feature flag deleted event.
+ */
+export interface WSFeatureDeletedMessage extends WSMessage {
+  type: "feature:deleted";
+  data: {
+    key: string;
+  };
+}
+
+/**
+ * Feature flag enabled event.
+ */
+export interface WSFeatureEnabledMessage extends WSMessage {
+  type: "feature:enabled";
+  data: {
+    key: string;
+    name: string;
+  };
+}
+
+/**
+ * Feature flag disabled event.
+ */
+export interface WSFeatureDisabledMessage extends WSMessage {
+  type: "feature:disabled";
+  data: {
+    key: string;
+    name: string;
+  };
+}
+
+/**
+ * Feature override set event.
+ */
+export interface WSFeatureOverrideSetMessage extends WSMessage {
+  type: "feature:override:set";
+  data: {
+    featureKey: string;
+    scope: "site" | "user";
+    targetId: string;
+    enabled: boolean;
+  };
+}
+
+/**
+ * Feature override deleted event.
+ */
+export interface WSFeatureOverrideDeletedMessage extends WSMessage {
+  type: "feature:override:deleted";
+  data: {
+    featureKey: string;
+    scope: "site" | "user";
+    targetId: string;
+  };
+}
+
+/**
+ * Feature rollout changed event.
+ */
+export interface WSFeatureRolloutChangedMessage extends WSMessage {
+  type: "feature:rollout:changed";
+  data: {
+    key: string;
+    percentage: number;
+    enabled: boolean;
+  };
+}
+
+/**
+ * Feature targeting updated event.
+ */
+export interface WSFeatureTargetingUpdatedMessage extends WSMessage {
+  type: "feature:targeting:updated";
+  data: {
+    key: string;
+    rulesCount: number;
+  };
+}
+
+/**
+ * Feature cache invalidated event.
+ */
+export interface WSFeatureCacheInvalidatedMessage extends WSMessage {
+  type: "feature:cache:invalidated";
+  data: {
+    keys: string[];
+  };
+}
+
 /**
  * Union of all WebSocket message types.
  */
@@ -337,7 +468,18 @@ export type WSMessageUnion =
   | WSKernelModuleHealthMessage
   | WSKernelSystemReadyMessage
   | WSKernelSystemShutdownMessage
-  | WSKernelSystemHealthMessage;
+  | WSKernelSystemHealthMessage
+  // Feature flag events
+  | WSFeatureCreatedMessage
+  | WSFeatureUpdatedMessage
+  | WSFeatureDeletedMessage
+  | WSFeatureEnabledMessage
+  | WSFeatureDisabledMessage
+  | WSFeatureOverrideSetMessage
+  | WSFeatureOverrideDeletedMessage
+  | WSFeatureRolloutChangedMessage
+  | WSFeatureTargetingUpdatedMessage
+  | WSFeatureCacheInvalidatedMessage;
 
 /**
  * Client-to-server message types.

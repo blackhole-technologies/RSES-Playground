@@ -27,6 +27,10 @@ import { initializeKernel, getKernel } from "./kernel-integration";
 import { createKernelWSBridge } from "./kernel";
 import { getWSServer } from "./ws";
 
+// Feature flags real-time updates
+import { getFeatureFlagsService } from "./services/feature-flags";
+import { createFeatureFlagsWSBridge } from "./services/feature-flags/ws-bridge";
+
 const app = express();
 
 // Check for SSL certificates
@@ -199,6 +203,21 @@ export function log(message: string, source = "express") {
   // Set up WebSocket server
   setupWebSocket(httpServer, "/ws");
 
+  // ==========================================================================
+  // FEATURE FLAGS REAL-TIME UPDATES
+  // ==========================================================================
+  // Set up WebSocket bridge for feature flag events.
+  // Clients subscribing to "feature-flags" channel will receive live updates
+  // when flags are created, updated, enabled, disabled, or deleted.
+  // ==========================================================================
+  const wsServer = getWSServer();
+  let cleanupFeatureFlagsBridge: (() => void) | null = null;
+  if (wsServer) {
+    const featureFlagsService = getFeatureFlagsService();
+    cleanupFeatureFlagsBridge = createFeatureFlagsWSBridge(featureFlagsService, wsServer);
+    serverLog.info("Feature flags WebSocket bridge activated");
+  }
+
   await registerRoutes(httpServer, app);
 
   // ==========================================================================
@@ -233,7 +252,6 @@ export function log(message: string, source = "express") {
       );
 
       // Setup WebSocket bridge for real-time kernel events
-      const wsServer = getWSServer();
       let cleanupBridge: (() => void) | null = null;
       if (wsServer) {
         cleanupBridge = createKernelWSBridge(kernel.events, wsServer);
@@ -245,6 +263,9 @@ export function log(message: string, source = "express") {
         serverLog.info("Shutting down kernel...");
         if (cleanupBridge) {
           cleanupBridge();
+        }
+        if (cleanupFeatureFlagsBridge) {
+          cleanupFeatureFlagsBridge();
         }
         return kernel.shutdown();
       };
@@ -261,6 +282,18 @@ export function log(message: string, source = "express") {
     } catch (error) {
       serverLog.error({ error }, "Failed to initialize kernel");
     }
+  } else {
+    // No kernel, but still register shutdown handlers for feature flags bridge
+    const handleShutdown = async () => {
+      serverLog.info("Shutting down...");
+      if (cleanupFeatureFlagsBridge) {
+        cleanupFeatureFlagsBridge();
+      }
+      process.exit(0);
+    };
+
+    process.on("SIGTERM", handleShutdown);
+    process.on("SIGINT", handleShutdown);
   }
 
   app.use((err: any, req: Request, res: Response, next: NextFunction) => {
