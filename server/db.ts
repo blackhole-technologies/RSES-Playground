@@ -16,6 +16,7 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import * as schema from "@shared/schema";
+import * as rbacSchema from "@shared/rbac-schema";
 import { dbLogger as log } from "./logger";
 import { dbPoolSize, dbQueryDuration } from "./metrics";
 import {
@@ -121,8 +122,9 @@ function updatePoolMetrics(): void {
 
 /**
  * Creates the drizzle ORM instance.
+ * Includes both main schema and RBAC schema.
  */
-export const db = drizzle(pool, { schema });
+export const db = drizzle(pool, { schema: { ...schema, ...rbacSchema } });
 
 /**
  * Executes a database query with circuit breaker protection.

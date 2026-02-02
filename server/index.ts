@@ -75,6 +75,9 @@ securityMiddleware.forEach((mw) => app.use(mw));
 // Correlation ID middleware for request tracing
 app.use(correlationMiddleware());
 
+// Request ID for audit logging
+app.use(requestId);
+
 // Prometheus metrics collection
 app.use(metricsMiddleware());
 
@@ -111,6 +114,12 @@ app.use(passport.session());
 // Health check routes (early in the chain, minimal middleware)
 registerHealthRoutes(app);
 
+// Audit logging middleware for all API routes (after auth so user is available)
+app.use("/api", auditMiddleware({
+  skipPaths: ["/api/health", "/api/ready", "/api/auth/status", "/api/docs"],
+  skipMethods: ["OPTIONS", "HEAD"],
+}));
+
 // Prometheus metrics endpoint
 registerMetricsRoute(app);
 
@@ -140,6 +149,9 @@ import featureFlagRoutes from "./services/feature-flags/routes";
 import featureFlagSiteRoutes from "./services/feature-flags/site-routes";
 import adminSitesRoutes from "./routes/admin-sites";
 import adminUsersRoutes from "./routes/admin-users";
+import adminRbacRoutes from "./routes/admin-rbac";
+import adminAuditRoutes from "./routes/admin-audit";
+import { requestId, auditMiddleware } from "./middleware/audit";
 import { DomainRouter } from "./multisite/routing/domain-router";
 import {
   createTenantIsolationMiddleware,
@@ -195,6 +207,14 @@ app.use("/api/admin/sites", adminSitesRoutes);
 // Users admin API routes
 // Provides user CRUD, role management, and session management
 app.use("/api/admin/users", adminUsersRoutes);
+
+// RBAC admin API routes
+// Provides role and permission management
+app.use("/api/admin/rbac", adminRbacRoutes);
+
+// Audit log admin API routes
+// Provides audit log viewing and statistics
+app.use("/api/admin/audit", adminAuditRoutes);
 
 // Site-scoped feature flags API routes
 // Provides tenant-isolated feature flag operations
