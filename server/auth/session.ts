@@ -5,12 +5,16 @@
  * @author SEC (Security Specialist Agent)
  * @validated SYS (Systems Analyst Agent)
  * @created 2026-01-31
+ * @updated 2026-02-02 - Added Redis session store support
  *
  * @security Uses secure session cookies with proper flags for production.
+ * @security Redis store for production scalability and persistence.
  */
 
 import session from "express-session";
 import MemoryStore from "memorystore";
+import RedisStore from "connect-redis";
+import { Redis } from "ioredis";
 import type { Express } from "express";
 import { authLogger as log } from "../logger";
 
@@ -28,6 +32,71 @@ export interface SessionConfig {
   maxAge?: number;
   /** Enable secure cookie (default: true in production) */
   secure?: boolean;
+  /** Redis URL for session store (optional, uses memory store if not set) */
+  redisUrl?: string;
+}
+
+/**
+ * Minimum session secret length for security.
+ */
+const MIN_SECRET_LENGTH = 32;
+
+/**
+ * Validates the session secret meets security requirements.
+ */
+function validateSecret(secret: string): void {
+  if (secret.length < MIN_SECRET_LENGTH) {
+    throw new Error(
+      `SESSION_SECRET must be at least ${MIN_SECRET_LENGTH} characters long`
+    );
+  }
+
+  // Check for common insecure patterns
+  const insecurePatterns = [
+    "password",
+    "secret",
+    "123456",
+    "change-me",
+    "default",
+    "dev-secret",
+  ];
+
+  const lowerSecret = secret.toLowerCase();
+  for (const pattern of insecurePatterns) {
+    if (lowerSecret.includes(pattern)) {
+      throw new Error(
+        `SESSION_SECRET contains insecure pattern "${pattern}". Use a cryptographically secure random string.`
+      );
+    }
+  }
+}
+
+/**
+ * Creates a Redis client with error handling.
+ */
+function createRedisClient(url: string): Redis {
+  const client = new Redis(url, {
+    maxRetriesPerRequest: 3,
+    retryStrategy(times) {
+      const delay = Math.min(times * 50, 2000);
+      return delay;
+    },
+    lazyConnect: true,
+  });
+
+  client.on("error", (err) => {
+    log.error({ err }, "Redis session store error");
+  });
+
+  client.on("connect", () => {
+    log.info("Connected to Redis session store");
+  });
+
+  client.on("reconnecting", () => {
+    log.warn("Reconnecting to Redis session store");
+  });
+
+  return client;
 }
 
 /**
@@ -39,10 +108,37 @@ export interface SessionConfig {
 export function createSessionMiddleware(config: SessionConfig) {
   const isProduction = process.env.NODE_ENV === "production";
 
-  // Session store - use memory store for development, consider Redis for production
-  const store = new MemoryStoreSession({
-    checkPeriod: 86400000, // prune expired entries every 24h
-  });
+  // Validate secret in production
+  if (isProduction) {
+    validateSecret(config.secret);
+  }
+
+  // Select session store based on Redis availability
+  let store: session.Store;
+
+  if (config.redisUrl) {
+    // Use Redis store for production/scalability
+    const redisClient = createRedisClient(config.redisUrl);
+    store = new RedisStore({
+      client: redisClient,
+      prefix: "rses:session:",
+      ttl: Math.floor((config.maxAge || 24 * 60 * 60 * 1000) / 1000), // TTL in seconds
+    });
+    log.info("Using Redis session store");
+  } else {
+    // Use memory store for development
+    store = new MemoryStoreSession({
+      checkPeriod: 86400000, // prune expired entries every 24h
+    });
+
+    if (isProduction) {
+      log.warn(
+        "Using in-memory session store in production. Set REDIS_URL for persistence and scalability."
+      );
+    } else {
+      log.info("Using in-memory session store (development mode)");
+    }
+  }
 
   return session({
     name: config.cookieName || "rses.sid",
@@ -66,19 +162,31 @@ export function createSessionMiddleware(config: SessionConfig) {
  * @param config - Optional session configuration
  */
 export function setupSession(app: Express, config?: Partial<SessionConfig>): void {
-  // Get session secret from environment or use a default for development
+  const isProduction = process.env.NODE_ENV === "production";
+
+  // Get session secret from environment or config
   const secret = process.env.SESSION_SECRET || config?.secret;
 
   if (!secret) {
-    if (process.env.NODE_ENV === "production") {
-      throw new Error("SESSION_SECRET environment variable is required in production");
+    if (isProduction) {
+      throw new Error(
+        "SESSION_SECRET environment variable is required in production. " +
+          `Use a cryptographically secure random string of at least ${MIN_SECRET_LENGTH} characters. ` +
+          "Generate one with: openssl rand -base64 48"
+      );
     }
     // Use a default for development (not secure, but convenient)
-    log.warn("Using default session secret - set SESSION_SECRET in production");
+    log.warn(
+      "Using default session secret - set SESSION_SECRET environment variable for production"
+    );
   }
 
+  // Get Redis URL from environment
+  const redisUrl = process.env.REDIS_URL || config?.redisUrl;
+
   const sessionMiddleware = createSessionMiddleware({
-    secret: secret || "rses-dev-secret-change-in-production",
+    secret: secret || "rses-development-only-secret-not-for-production-use",
+    redisUrl,
     ...config,
   });
 
