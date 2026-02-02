@@ -751,4 +751,61 @@ router.post("/feature-flags/maintenance/clear-cache", requireAuth, async (req, r
   }
 });
 
+// =============================================================================
+// EDGE CACHE ROUTES
+// =============================================================================
+
+/**
+ * GET /api/admin/feature-flags/cache/status - Get edge cache status
+ */
+router.get("/feature-flags/cache/status", async (req, res) => {
+  try {
+    const service = getFeatureFlagsService();
+    const hasCache = service.hasEdgeCache();
+    const stats = service.getEdgeCacheStats();
+
+    res.json({
+      enabled: hasCache,
+      stats,
+    });
+  } catch (err) {
+    log.error({ err }, "Failed to get edge cache status");
+    res.status(500).json({ message: "Failed to get edge cache status" });
+  }
+});
+
+/**
+ * POST /api/admin/feature-flags/cache/invalidate - Invalidate edge cache
+ */
+router.post("/feature-flags/cache/invalidate", requireAuth, async (req, res) => {
+  try {
+    const service = getFeatureFlagsService();
+    const featureKey = req.body.featureKey as string | undefined;
+
+    const deleted = await service.invalidateEdgeCache(featureKey);
+
+    res.json({
+      invalidated: deleted,
+      scope: featureKey || "all",
+    });
+  } catch (err) {
+    log.error({ err }, "Failed to invalidate edge cache");
+    res.status(500).json({ message: "Failed to invalidate edge cache" });
+  }
+});
+
+/**
+ * POST /api/admin/feature-flags/cache/reset-stats - Reset edge cache stats
+ */
+router.post("/feature-flags/cache/reset-stats", requireAuth, async (req, res) => {
+  try {
+    const service = getFeatureFlagsService();
+    service.resetEdgeCacheStats();
+    res.json({ message: "Edge cache stats reset" });
+  } catch (err) {
+    log.error({ err }, "Failed to reset edge cache stats");
+    res.status(500).json({ message: "Failed to reset edge cache stats" });
+  }
+});
+
 export default router;

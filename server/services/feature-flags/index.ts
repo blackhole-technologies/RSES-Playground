@@ -49,6 +49,7 @@ import {
 import { createPgStorage } from "./pg-storage";
 import { FeatureFlagEvaluator } from "./evaluator";
 import { FeatureDependencyResolver } from "./dependency-resolver";
+import { getEdgeCache, type FeatureFlagEdgeCache } from "./edge-cache";
 import { createModuleLogger } from "../../logger";
 
 const log = createModuleLogger("feature-flags-service");
@@ -92,6 +93,7 @@ export class FeatureFlagsService {
   private evaluator: FeatureFlagEvaluator;
   private dependencyResolver: FeatureDependencyResolver;
   private config: FeatureFlagServiceConfig;
+  private edgeCache: FeatureFlagEdgeCache | null;
 
   private eventHandlers: Set<FeatureFlagEventHandler> = new Set();
 
@@ -127,6 +129,14 @@ export class FeatureFlagsService {
 
     // Initialize dependency resolver
     this.dependencyResolver = new FeatureDependencyResolver();
+
+    // Initialize edge cache (returns null if Redis not configured)
+    this.edgeCache = getEdgeCache();
+    if (this.edgeCache) {
+      // Wire up event handler for cache invalidation
+      this.onEvent((event) => this.edgeCache?.handleEvent(event));
+      log.info("Edge cache enabled for feature flags");
+    }
 
     log.info("Feature flags service initialized");
   }
@@ -521,27 +531,71 @@ export class FeatureFlagsService {
   // ===========================================================================
 
   /**
-   * Evaluate a feature flag
+   * Evaluate a feature flag with edge caching
    */
   async evaluate(
     featureKey: string,
     context: EvaluationContext
   ): Promise<EvaluationResult> {
-    return this.evaluator.evaluate(featureKey, context);
+    // Try edge cache first
+    if (this.edgeCache) {
+      const cached = await this.edgeCache.get(featureKey, context);
+      if (cached) {
+        return { ...cached, source: cached.source as EvaluationResult["source"] };
+      }
+    }
+
+    // Evaluate and cache
+    const result = await this.evaluator.evaluate(featureKey, context);
+
+    if (this.edgeCache) {
+      await this.edgeCache.set(featureKey, context, result);
+    }
+
+    return result;
   }
 
   /**
-   * Evaluate multiple features
+   * Evaluate multiple features with edge caching
    */
   async evaluateBatch(
     featureKeys: string[],
     context: EvaluationContext
   ): Promise<BatchEvaluationResponse> {
     const startTime = Date.now();
-    const results = await this.evaluator.evaluateBatch(featureKeys, context);
+    const finalResults = new Map<string, EvaluationResult>();
+    let keysToEvaluate = featureKeys;
+
+    // Try edge cache first for batch
+    if (this.edgeCache) {
+      const cached = await this.edgeCache.getBatch(featureKeys, context);
+      for (const [key, result] of cached) {
+        finalResults.set(key, result);
+      }
+      // Filter out cached keys
+      keysToEvaluate = featureKeys.filter((k) => !cached.has(k));
+    }
+
+    // Evaluate remaining keys
+    if (keysToEvaluate.length > 0) {
+      const evaluated = await this.evaluator.evaluateBatch(keysToEvaluate, context);
+      for (const [key, result] of evaluated) {
+        finalResults.set(key, result);
+      }
+
+      // Cache new evaluations
+      if (this.edgeCache) {
+        const toCache = Array.from(evaluated.entries()).map(([featureKey, result]) => ({
+          featureKey,
+          context,
+          result,
+        }));
+        await this.edgeCache.setBatch(toCache);
+      }
+    }
 
     return {
-      results: Object.fromEntries(results),
+      results: Object.fromEntries(finalResults),
       evaluatedAt: new Date().toISOString(),
       totalTimeMs: Date.now() - startTime,
     };
@@ -812,11 +866,52 @@ export class FeatureFlagsService {
   }
 
   /**
-   * Clear evaluation cache
+   * Clear evaluation cache (in-memory and edge)
    */
   clearCache(): void {
     this.evaluator.clearCache();
+    if (this.edgeCache) {
+      this.edgeCache.invalidateAll().catch((err) => {
+        log.error({ err }, "Failed to clear edge cache");
+      });
+    }
     this.emitEvent({ type: "cache_invalidated", keys: ["*"] });
+  }
+
+  // ===========================================================================
+  // EDGE CACHE
+  // ===========================================================================
+
+  /**
+   * Check if edge cache is available
+   */
+  hasEdgeCache(): boolean {
+    return this.edgeCache !== null && this.edgeCache.isAvailable();
+  }
+
+  /**
+   * Get edge cache statistics
+   */
+  getEdgeCacheStats(): { hits: number; misses: number; invalidations: number; errors: number; avgLatencyMs: number; lastResetAt: string } | null {
+    return this.edgeCache?.getStats() ?? null;
+  }
+
+  /**
+   * Reset edge cache statistics
+   */
+  resetEdgeCacheStats(): void {
+    this.edgeCache?.resetStats();
+  }
+
+  /**
+   * Invalidate edge cache for specific feature
+   */
+  async invalidateEdgeCache(featureKey?: string): Promise<number> {
+    if (!this.edgeCache) return 0;
+    if (featureKey) {
+      return this.edgeCache.invalidate(featureKey);
+    }
+    return this.edgeCache.invalidateAll();
   }
 }
 
@@ -849,3 +944,4 @@ export function resetFeatureFlagsService(): void {
 export * from "./types";
 export { FeatureDependencyResolver } from "./dependency-resolver";
 export { FeatureFlagEvaluator, TargetingRuleEvaluator, PercentageRolloutEvaluator } from "./evaluator";
+export { FeatureFlagEdgeCache, getEdgeCache, resetEdgeCache } from "./edge-cache";

@@ -138,6 +138,7 @@ import {
 } from "./services/adapters";
 import featureFlagRoutes from "./services/feature-flags/routes";
 import adminSitesRoutes from "./routes/admin-sites";
+import adminUsersRoutes from "./routes/admin-users";
 import { DomainRouter } from "./multisite/routing/domain-router";
 import {
   createTenantIsolationMiddleware,
@@ -189,6 +190,10 @@ app.use("/api/admin", featureFlagRoutes);
 // Sites admin API routes
 // Provides multi-site management, health monitoring, and bulk operations
 app.use("/api/admin/sites", adminSitesRoutes);
+
+// Users admin API routes
+// Provides user CRUD, role management, and session management
+app.use("/api/admin/users", adminUsersRoutes);
 
 // Export domain router for use by other services
 export { domainRouter };
