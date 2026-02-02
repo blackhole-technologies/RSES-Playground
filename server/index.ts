@@ -123,8 +123,8 @@ app.use("/api", auditMiddleware({
 // Prometheus metrics endpoint
 registerMetricsRoute(app);
 
-// Auth routes (before other routes)
-app.use("/api/auth", authRoutes);
+// Auth routes (before other routes) with stricter rate limiting
+app.use("/api/auth", authRateLimit, authRoutes);
 
 // OpenAPI documentation (Swagger UI)
 app.use("/api/docs", openApiRoutes);
@@ -151,7 +151,9 @@ import adminSitesRoutes from "./routes/admin-sites";
 import adminUsersRoutes from "./routes/admin-users";
 import adminRbacRoutes from "./routes/admin-rbac";
 import adminAuditRoutes from "./routes/admin-audit";
+import sdkApiRoutes from "./routes/sdk-api";
 import { requestId, auditMiddleware } from "./middleware/audit";
+import { authRateLimit, adminRateLimit } from "./middleware/rate-limit";
 import { DomainRouter } from "./multisite/routing/domain-router";
 import {
   createTenantIsolationMiddleware,
@@ -198,27 +200,31 @@ app.use("/api/rses", siteContextMiddleware, tenantIsolationMiddleware, siteIsola
 
 // Feature flags admin API routes
 // Provides CRUD operations, evaluation, statistics, and rollout history
-app.use("/api/admin", featureFlagRoutes);
+app.use("/api/admin", adminRateLimit, featureFlagRoutes);
 
 // Sites admin API routes
 // Provides multi-site management, health monitoring, and bulk operations
-app.use("/api/admin/sites", adminSitesRoutes);
+app.use("/api/admin/sites", adminRateLimit, adminSitesRoutes);
 
 // Users admin API routes
 // Provides user CRUD, role management, and session management
-app.use("/api/admin/users", adminUsersRoutes);
+app.use("/api/admin/users", adminRateLimit, adminUsersRoutes);
 
 // RBAC admin API routes
 // Provides role and permission management
-app.use("/api/admin/rbac", adminRbacRoutes);
+app.use("/api/admin/rbac", adminRateLimit, adminRbacRoutes);
 
 // Audit log admin API routes
 // Provides audit log viewing and statistics
-app.use("/api/admin/audit", adminAuditRoutes);
+app.use("/api/admin/audit", adminRateLimit, adminAuditRoutes);
 
 // Site-scoped feature flags API routes
 // Provides tenant-isolated feature flag operations
 app.use("/api/site/feature-flags", featureFlagSiteRoutes);
+
+// SDK API routes for external service integration
+// Uses API key authentication and tiered rate limiting
+app.use("/api/sdk", sdkApiRoutes);
 
 // Export domain router for use by other services
 export { domainRouter };

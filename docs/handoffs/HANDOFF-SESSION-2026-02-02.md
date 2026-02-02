@@ -1,13 +1,17 @@
 # RSES CMS Session Handoff - 2026-02-02
 
 **Version**: 0.8.0
-**Commits**: 3 (`551176b`, `e5bb7c7`, pending)
+**Commits**: 4 (`551176b`, `e5bb7c7`, `ccb08be`, pending)
 
 ---
 
 ## Session Summary
 
-Completed Phase 2 remaining features, started Phase 3 multi-tenancy, and implemented audit logging + RBAC enhancements.
+Completed Phase 2 remaining features and all Phase 3 security/multi-tenancy work:
+- Audit logging
+- RBAC enhancements
+- API rate limiting
+- Feature flag SDK
 
 ---
 
@@ -28,47 +32,36 @@ Completed Phase 2 remaining features, started Phase 3 multi-tenancy, and impleme
 | **Site-scoped Feature Flags** | `server/services/feature-flags/site-scoped.ts` |
 | **Tenant-isolated Routes** | `server/services/feature-flags/site-routes.ts` |
 
-### Phase 3: Security Enhancements (NEW)
+### Phase 3: Security Enhancements
 
 | Feature | Files |
 |---------|-------|
-| **Audit Logging Service** | `server/services/audit/audit-service.ts` |
-| **Audit Middleware** | `server/middleware/audit.ts` |
-| **Audit Admin Routes** | `server/routes/admin-audit.ts` |
-| **RBAC Schema** | `shared/rbac-schema.ts` |
-| **RBAC Service** | `server/services/rbac/rbac-service.ts` |
-| **RBAC Middleware** | `server/middleware/rbac.ts` |
-| **RBAC Admin Routes** | `server/routes/admin-rbac.ts` |
+| **Audit Logging** | `server/services/audit/audit-service.ts`, `server/middleware/audit.ts`, `server/routes/admin-audit.ts` |
+| **RBAC System** | `shared/rbac-schema.ts`, `server/services/rbac/rbac-service.ts`, `server/middleware/rbac.ts`, `server/routes/admin-rbac.ts` |
+| **API Rate Limiting** | `server/middleware/rate-limit.ts` |
+| **Feature Flag SDK** | `shared/sdk/feature-flags-sdk.ts`, `server/routes/sdk-api.ts` |
 
 ---
 
 ## New API Endpoints
 
+### SDK API (`/api/sdk`)
+
+For external service consumption via API key auth:
+
+- `POST /feature-flags/evaluate` - Evaluate single flag
+- `POST /feature-flags/evaluate-batch` - Evaluate multiple flags
+- `POST /feature-flags/all` - Get all flags for site
+- `GET /feature-flags/:key` - Get flag state
+- `GET /health` - Health check (no auth)
+
 ### RBAC Management (`/api/admin/rbac`)
 
-**Roles:**
-- `GET /roles` - List all roles
-- `GET /roles/:id` - Get role with permissions
-- `POST /roles` - Create role
-- `PATCH /roles/:id` - Update role
-- `DELETE /roles/:id` - Delete role
-
-**Permissions:**
-- `GET /permissions` - List all permissions
-- `POST /roles/:id/permissions` - Assign permission to role
-- `DELETE /roles/:roleId/permissions/:permissionId` - Remove permission
-
-**User Role Assignment:**
-- `GET /users/:id/roles` - Get user's roles
-- `POST /users/:id/roles` - Assign role to user
-- `DELETE /users/:userId/roles/:roleId` - Remove role from user
-- `GET /users/:id/permissions` - Get effective permissions
-- `POST /users/:id/permissions` - Grant direct permission
-- `DELETE /users/:id/permissions/:key` - Revoke permission
-
-**Utilities:**
-- `POST /check` - Check user permission
-- `POST /initialize` - Initialize default roles/permissions
+- Role CRUD: `GET/POST/PATCH/DELETE /roles`
+- Permission assignment: `POST/DELETE /roles/:id/permissions`
+- User roles: `GET/POST/DELETE /users/:id/roles`
+- User permissions: `GET/POST/DELETE /users/:id/permissions`
+- Permission check: `POST /check`
 
 ### Audit Logs (`/api/admin/audit`)
 
@@ -77,11 +70,60 @@ Completed Phase 2 remaining features, started Phase 3 multi-tenancy, and impleme
 - `GET /stats/summary` - Get statistics
 - `GET /resource/:type/:id` - Resource audit trail
 - `GET /user/:userId` - User activity log
-- `POST /flush` - Force flush pending logs
 
 ---
 
 ## Architecture
+
+### Rate Limiting
+
+```
+Request → Key Generator → Store (Memory/Redis) → Check Limit → Allow/Deny
+                ↓
+         Tiered by user type:
+         - Anonymous: 30/min
+         - Authenticated: 100/min
+         - Admin: 500/min
+         - Site tiers: 500-10k/min
+```
+
+**Features:**
+- Per-IP (anonymous)
+- Per-user (authenticated)
+- Per-site (multi-tenant)
+- Redis-backed sliding window
+- Endpoint-specific limits
+
+### Feature Flag SDK
+
+```typescript
+import { FeatureFlagClient } from '@rses/sdk';
+
+const client = new FeatureFlagClient({
+  apiKey: 'ff_starter_xxx',
+  baseUrl: 'https://cms.example.com/api/sdk',
+  siteId: 'my-site',
+});
+
+// Evaluate
+const enabled = await client.isEnabled('dark_mode', { userId: '123' });
+
+// Batch evaluate
+const results = await client.evaluateAll(['feature_a', 'feature_b']);
+
+// Real-time updates (WebSocket)
+client.subscribe('dark_mode', (enabled) => {
+  console.log('Flag changed:', enabled);
+});
+```
+
+**Features:**
+- API key authentication
+- Request caching (1 min TTL)
+- Batch evaluation
+- Real-time WebSocket updates
+- Offline fallback defaults
+- Automatic retry with backoff
 
 ### RBAC System
 
@@ -90,15 +132,8 @@ User → Roles → Permissions
          ↓
     Site-scoped (optional)
          ↓
-    Permission Check
+    Permission Check (cached 1 min)
 ```
-
-**Features:**
-- Role hierarchy with inheritance
-- Site-scoped permissions
-- Direct grants/denies (override roles)
-- Permission caching (1 min TTL)
-- Time-limited assignments
 
 **Default Roles:**
 - `super_admin` - Full access
@@ -109,26 +144,19 @@ User → Roles → Permissions
 ### Audit Logging
 
 ```
-Request → Middleware → Async Queue → Batch Insert
+Request → Middleware → Async Queue → Batch Insert (5s/50 entries)
               ↓
-         Context Extraction (actor, IP, session)
-              ↓
-         Change Tracking (diff computation)
+         - Actor extraction
+         - Change tracking
+         - Sensitive data masking
 ```
-
-**Features:**
-- Async batched writes (5s intervals, 50 batch size)
-- Sensitive data masking
-- Change tracking with field-level diffs
-- Event categories: auth, data, admin, security
-- Request correlation IDs
 
 ---
 
 ## Database Schema (New Tables)
 
 **RBAC:**
-- `roles` - Role definitions
+- `roles` - Role definitions with hierarchy
 - `permissions` - Permission keys
 - `role_permissions` - Role-permission mappings
 - `user_roles` - User role assignments (site-scoped)
@@ -140,24 +168,16 @@ Request → Middleware → Async Queue → Batch Insert
 
 ---
 
-## Middleware Integration
+## Rate Limit Presets
 
-```typescript
-// RBAC Permission Check
-router.post("/", requirePermission("feature_flags:create"), handler);
-
-// Multiple permissions required
-router.delete("/", requirePermission({
-  allPermissions: ["feature_flags:delete", "feature_flags:manage"],
-  audit: true
-}), handler);
-
-// Site-scoped check
-router.patch("/", requirePermission({
-  permission: "configs:update",
-  getSiteId: (req) => req.get("x-site-id")
-}), handler);
-```
+| Endpoint | Anonymous | Auth | Admin |
+|----------|-----------|------|-------|
+| Auth | 10/5min | - | - |
+| API | 30/min | 100/min | 500/min |
+| Admin | - | - | 200/min |
+| Feature Flags | 100/min | 1000/min | - |
+| Expensive ops | - | 10/hour | - |
+| Bulk ops | - | 5/min | - |
 
 ---
 
@@ -166,28 +186,37 @@ router.patch("/", requirePermission({
 ```env
 DATABASE_URL=postgresql://...
 SESSION_SECRET=<min 32 chars>
-REDIS_URL=redis://... (enables edge caching)
+REDIS_URL=redis://... (enables edge caching + distributed rate limiting)
+```
+
+---
+
+## SDK Usage
+
+```bash
+# Development API key (auto-accepted in dev mode)
+curl -X POST http://localhost:5000/api/sdk/feature-flags/evaluate \
+  -H "Authorization: Bearer dev_test" \
+  -H "X-Site-ID: my-site" \
+  -H "Content-Type: application/json" \
+  -d '{"key": "dark_mode", "context": {"userId": "123"}}'
 ```
 
 ---
 
 ## Next Steps
 
-**Phase 3 remaining:**
-1. ~~Audit logging~~ ✓
-2. ~~RBAC enhancements~~ ✓
-3. API rate limiting (per-user/site)
-4. Feature flag SDK (client SDK)
+**Phase 3 Complete!** ✓
 
-**Multi-tenancy expansion:**
+**Multi-tenancy expansion (optional):**
 - Site-scoped content types
 - Site-scoped taxonomy
 - Site-scoped media
 
-**RBAC Follow-up:**
-- Admin UI for role management
-- Permission assignment UI
-- Audit log viewer component
+**SDK enhancements:**
+- React hooks package
+- Admin UI for API key management
+- Usage analytics dashboard
 
 ---
 
@@ -204,13 +233,11 @@ npx drizzle-kit push  # Push schema to DB
 
 ## Migration Required
 
-Run to create new tables:
 ```bash
+# Create new tables
 npx drizzle-kit push
-```
 
-Then initialize default roles:
-```bash
+# Initialize RBAC defaults
 curl -X POST http://localhost:5000/api/admin/rbac/initialize \
   -H "Cookie: <admin_session>"
 ```
@@ -220,7 +247,8 @@ curl -X POST http://localhost:5000/api/admin/rbac/initialize \
 ## Git Log
 
 ```
-(pending) Add audit logging and RBAC enhancements
+(pending) Add API rate limiting and feature flag SDK
+ccb08be Add audit logging and RBAC enhancements
 e5bb7c7 Add multi-tenancy support for feature flags
 551176b Complete Phase 2: edge caching, admin widgets, user management
 ```
