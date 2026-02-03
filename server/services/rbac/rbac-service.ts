@@ -77,7 +77,11 @@ function getCacheKey(userId: number, siteId?: string): string {
   return `${userId}:${siteId || "global"}`;
 }
 
-function invalidateCache(userId: number, siteId?: string): void {
+/**
+ * Invalidate permission cache for a user.
+ * Exported for use by admin routes when user data changes.
+ */
+export function invalidateCache(userId: number, siteId?: string): void {
   if (siteId) {
     permissionCache.delete(getCacheKey(userId, siteId));
   }

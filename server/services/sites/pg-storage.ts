@@ -10,6 +10,7 @@
 import { eq, and, or, ilike, inArray, sql, desc, asc } from "drizzle-orm";
 import { db, withCircuitBreaker } from "../../db";
 import { sites, type SiteRow, type InsertSiteRow } from "@shared/schema";
+import { safeLikePattern } from "../../lib/sql-utils";
 import type { SiteConfig, ResourceUsage } from "@shared/admin/types";
 import { createModuleLogger } from "../../logger";
 
@@ -193,7 +194,7 @@ export class PgSitesStorage implements ISitesStorage {
       const conditions = [];
 
       if (query.search) {
-        const searchPattern = `%${query.search}%`;
+        const searchPattern = safeLikePattern(query.search);
         conditions.push(
           or(
             ilike(sites.name, searchPattern),

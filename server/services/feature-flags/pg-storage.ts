@@ -11,6 +11,7 @@
 import { eq, and, or, ilike, inArray, sql, desc, asc, lte } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db, withCircuitBreaker } from "../../db";
+import { safeLikePattern } from "../../lib/sql-utils";
 import {
   featureFlags,
   siteFeatureOverrides,
@@ -299,7 +300,7 @@ export class PgFeatureFlagStorage implements IFeatureFlagStorage {
       const conditions = [];
 
       if (query.search) {
-        const searchPattern = `%${query.search}%`;
+        const searchPattern = safeLikePattern(query.search);
         conditions.push(
           or(
             ilike(featureFlags.key, searchPattern),

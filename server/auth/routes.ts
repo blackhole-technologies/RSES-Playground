@@ -5,6 +5,7 @@
  * @author SEC (Security Specialist Agent)
  * @validated SYS (Systems Analyst Agent)
  * @created 2026-01-31
+ * @modified 2026-02-03 - Added password complexity validation (MEDIUM-004)
  */
 
 import { Router, type Request, type Response, type NextFunction } from "express";
@@ -13,6 +14,7 @@ import { z } from "zod";
 import { createUser, findUserByUsername, toSafeUser } from "./passport";
 import { requireAuth } from "./session";
 import { authLogger as log } from "../logger";
+import { passwordComplexitySchema } from "./password-validation";
 
 const router = Router();
 
@@ -27,9 +29,7 @@ const registerSchema = z.object({
     .min(3, "Username must be at least 3 characters")
     .max(50, "Username must be less than 50 characters")
     .regex(/^[a-zA-Z0-9_-]+$/, "Username can only contain letters, numbers, underscores, and dashes"),
-  password: z.string()
-    .min(8, "Password must be at least 8 characters")
-    .max(128, "Password must be less than 128 characters"),
+  password: passwordComplexitySchema,
   email: z.string().email("Invalid email address").optional(),
   displayName: z.string().max(100, "Display name must be less than 100 characters").optional(),
 });

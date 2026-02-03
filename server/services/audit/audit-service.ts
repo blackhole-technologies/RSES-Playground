@@ -13,6 +13,7 @@ import { auditLogs, type AuditLog, type InsertAuditLog, type EventCategory, type
 import { eq, and, gte, lte, desc, sql, or, like } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import type { Request } from "express";
+import { safeLikePattern } from "../../lib/sql-utils";
 
 // ============================================================================
 // Types
@@ -234,10 +235,11 @@ class AuditService {
       conditions.push(lte(auditLogs.timestamp, options.endDate));
     }
     if (options.searchTerm) {
+      const searchPattern = safeLikePattern(options.searchTerm);
       conditions.push(
         or(
-          like(auditLogs.eventType, `%${options.searchTerm}%`),
-          like(auditLogs.resourceName || "", `%${options.searchTerm}%`)
+          like(auditLogs.eventType, searchPattern),
+          like(auditLogs.resourceName || "", searchPattern)
         )!
       );
     }

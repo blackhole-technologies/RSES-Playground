@@ -2,7 +2,7 @@
  * @file rate-limit.ts
  * @description Advanced rate limiting with per-user and per-site limits
  * @phase Phase 3 - Multi-tenancy & Security
- * @version 0.8.0
+ * @version 0.9.0
  *
  * Features:
  * - Per-IP rate limiting (default)
@@ -11,6 +11,7 @@
  * - Tiered limits (different limits for different user types)
  * - Redis-backed for distributed deployments
  * - Sliding window algorithm
+ * - Configurable fail mode (open/closed) for store errors
  */
 
 import type { Request, Response, NextFunction } from "express";
@@ -36,6 +37,12 @@ export interface RateLimitConfig {
   onLimitExceeded?: (req: Request, res: Response, info: RateLimitInfo) => void;
   /** Log rate limit events */
   audit?: boolean;
+  /** 
+   * Behavior when rate limit store fails.
+   * - 'open': Allow request through (default, backwards compatible)
+   * - 'closed': Block with 503 Service Unavailable (use for auth endpoints)
+   */
+  failMode?: 'open' | 'closed';
 }
 
 export interface RateLimitInfo {
@@ -266,6 +273,7 @@ export function rateLimit(config: RateLimitConfig) {
     keyGenerator = ipKeyGenerator,
     onLimitExceeded,
     audit = true,
+    failMode = 'open',
   } = config;
 
   const store = getStore();
@@ -332,8 +340,49 @@ export function rateLimit(config: RateLimitConfig) {
 
       next();
     } catch (error) {
-      // On error, allow the request (fail open)
-      console.error("[RateLimit] Error:", error);
+      // SECURITY FIX (MEDIUM-003): Configurable fail mode for store errors
+      // Always log store failures with full context for audit trail
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      
+      console.error("[RateLimit] Store error:", {
+        error: errorMessage,
+        path: req.path,
+        method: req.method,
+        ip: req.ip,
+        failMode,
+        keyPrefix,
+      });
+      
+      // Log to audit service for security tracking
+      try {
+        await logSecurityEvent(
+          auditService.contextFromRequest(req),
+          "rate_limit_store_error",
+          failMode === 'closed' ? "denied" : "allowed",
+          {
+            error: errorMessage,
+            path: req.path,
+            method: req.method,
+            failMode,
+            keyPrefix,
+          }
+        );
+      } catch (auditError) {
+        // Don't let audit failure block the request handling
+        console.error("[RateLimit] Audit logging failed:", auditError);
+      }
+      
+      if (failMode === 'closed') {
+        // SECURITY: Block request when store fails for security-sensitive endpoints
+        // This prevents attackers from exploiting store failures to bypass rate limits
+        return res.status(503).json({
+          error: "Service Unavailable",
+          message: "Rate limiting service temporarily unavailable. Please try again.",
+          code: "E_RATE_LIMIT_UNAVAILABLE",
+        });
+      }
+      
+      // Fail open for non-critical endpoints (backwards compatible default)
       next();
     }
   };
@@ -401,6 +450,8 @@ export const apiRateLimits: TieredRateLimitConfig = {
 
 /**
  * Auth endpoint rate limits (stricter for security).
+ * SECURITY: Uses failMode 'closed' to block requests when rate limiter fails,
+ * preventing attackers from exploiting store failures to bypass authentication limits.
  */
 export const authRateLimits: RateLimitConfig = {
   windowSec: 300, // 5 minutes
@@ -408,6 +459,7 @@ export const authRateLimits: RateLimitConfig = {
   keyPrefix: "rl:auth",
   keyGenerator: ipKeyGenerator,
   audit: true,
+  failMode: 'closed',
 };
 
 /**
@@ -450,6 +502,7 @@ export const featureFlagRateLimits: TieredRateLimitConfig = {
 
 /**
  * Admin API rate limits.
+ * SECURITY: Uses failMode 'closed' for admin endpoints.
  */
 export const adminRateLimits: RateLimitConfig = {
   windowSec: 60,
@@ -457,6 +510,7 @@ export const adminRateLimits: RateLimitConfig = {
   keyPrefix: "rl:admin",
   keyGenerator: userKeyGenerator,
   audit: true,
+  failMode: 'closed',
 };
 
 // ============================================================================

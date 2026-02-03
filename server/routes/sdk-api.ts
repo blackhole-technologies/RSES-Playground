@@ -2,19 +2,24 @@
  * @file sdk-api.ts
  * @description Public API endpoints for Feature Flag SDK
  * @phase Phase 3 - Multi-tenancy & Security
- * @version 0.8.0
+ * @version 0.9.0
  *
  * These endpoints are designed for external service consumption via the SDK.
  * They use API key authentication instead of session auth.
+ *
+ * Security: API keys are now stored in PostgreSQL with SHA-256 hashing.
+ * See HIGH-002 fix: in-memory storage replaced with persistent database storage.
  */
 
 import { Router } from "express";
 import { z } from "zod";
 import { getFeatureFlagsService } from "../services/feature-flags";
+import { getApiKeyService } from "../services/api-keys/api-key-service";
 import { createModuleLogger } from "../logger";
-import { featureFlagRateLimit, endpointRateLimit } from "../middleware/rate-limit";
+import { featureFlagRateLimit } from "../middleware/rate-limit";
 import { auditMiddleware } from "../middleware/audit";
 import type { Request, Response, NextFunction } from "express";
+import type { ApiKeyInfo } from "@shared/api-keys-schema";
 
 const log = createModuleLogger("sdk-api");
 const router = Router();
@@ -23,21 +28,11 @@ const router = Router();
 // API Key Authentication
 // ============================================================================
 
-interface ApiKeyInfo {
-  id: string;
-  siteId: string;
-  tier: "starter" | "pro" | "enterprise";
-  permissions: string[];
-  createdAt: Date;
-}
-
-// In production, this would be stored in database
-const apiKeys = new Map<string, ApiKeyInfo>();
-
 /**
  * Validate API key and attach info to request.
+ * Uses database-backed validation with SHA-256 hashing.
  */
-function apiKeyAuth(req: Request, res: Response, next: NextFunction) {
+async function apiKeyAuth(req: Request, res: Response, next: NextFunction) {
   const authHeader = req.get("Authorization");
 
   if (!authHeader?.startsWith("Bearer ")) {
@@ -50,37 +45,57 @@ function apiKeyAuth(req: Request, res: Response, next: NextFunction) {
 
   const apiKey = authHeader.slice(7);
 
-  // Check for development key
-  if (process.env.NODE_ENV !== "production" && apiKey.startsWith("dev_")) {
+  // Check for development key (development mode only)
+  if (process.env.NODE_ENV === "development" && apiKey.startsWith("dev_")) {
     (req as any).apiKey = {
-      id: "dev",
+      id: 0,
       siteId: req.get("X-Site-ID") || "default",
       tier: "enterprise",
-      permissions: ["read", "evaluate"],
+      permissions: ["read", "evaluate", "write", "admin"],
+      name: "Development Key",
       createdAt: new Date(),
-    };
+      lastUsedAt: null,
+      expiresAt: null,
+    } as ApiKeyInfo;
+    // SECURITY WARNING: Development API key used - for local dev only
+    log.warn({
+      event: "dev_api_key_used",
+      siteId: (req as any).apiKey.siteId,
+      ip: req.ip,
+      path: req.path,
+    }, "Development API key used - ensure NODE_ENV=development is intentional");
     return next();
   }
 
-  const keyInfo = apiKeys.get(apiKey);
+  try {
+    const apiKeyService = getApiKeyService();
+    const keyInfo = await apiKeyService.validateKey(apiKey);
 
-  if (!keyInfo) {
-    return res.status(401).json({
-      error: "Unauthorized",
-      message: "Invalid API key",
-      code: "E_INVALID_API_KEY",
+    if (!keyInfo) {
+      return res.status(401).json({
+        error: "Unauthorized",
+        message: "Invalid API key",
+        code: "E_INVALID_API_KEY",
+      });
+    }
+
+    // Attach key info to request
+    (req as any).apiKey = keyInfo;
+
+    // Override site ID from key if not provided
+    if (!req.get("X-Site-ID") && keyInfo.siteId) {
+      req.headers["x-site-id"] = keyInfo.siteId;
+    }
+
+    next();
+  } catch (err) {
+    log.error({ err }, "API key validation error");
+    return res.status(500).json({
+      error: "Internal Server Error",
+      message: "Failed to validate API key",
+      code: "E_AUTH_ERROR",
     });
   }
-
-  // Attach key info to request
-  (req as any).apiKey = keyInfo;
-
-  // Override site ID from key if not provided
-  if (!req.get("X-Site-ID") && keyInfo.siteId) {
-    req.headers["x-site-id"] = keyInfo.siteId;
-  }
-
-  next();
 }
 
 /**
@@ -335,49 +350,40 @@ router.get("/health", (req, res) => {
 
 /**
  * Generate a new API key.
- * In production, this would be protected by admin auth.
+ * Uses database-backed storage with SHA-256 hashing.
+ *
+ * @deprecated Use getApiKeyService().createKey() directly instead.
+ * This function is kept for backward compatibility during migration.
  */
-export function generateApiKey(siteId: string, tier: ApiKeyInfo["tier"] = "starter"): string {
-  const key = `ff_${tier}_${randomString(32)}`;
-
-  apiKeys.set(key, {
-    id: randomString(8),
-    siteId,
-    tier,
-    permissions: ["read", "evaluate"],
-    createdAt: new Date(),
-  });
-
-  return key;
+export async function generateApiKey(
+  siteId: string,
+  tier: "starter" | "pro" | "enterprise" = "starter",
+  name: string = "API Key",
+  createdBy: number = 1
+): Promise<string> {
+  const apiKeyService = getApiKeyService();
+  const result = await apiKeyService.createKey(siteId, tier, name, createdBy);
+  return result.key;
 }
 
 /**
- * Revoke an API key.
+ * Revoke an API key by ID.
+ *
+ * @deprecated Use getApiKeyService().revokeKey() directly instead.
  */
-export function revokeApiKey(key: string): boolean {
-  return apiKeys.delete(key);
+export async function revokeApiKey(keyId: number): Promise<boolean> {
+  const apiKeyService = getApiKeyService();
+  return apiKeyService.revokeKey(keyId);
 }
 
 /**
- * List all API keys for a site.
+ * List all API keys for a site (without exposing hashes).
+ *
+ * @deprecated Use getApiKeyService().listKeys() directly instead.
  */
-export function listApiKeys(siteId: string): ApiKeyInfo[] {
-  const keys: ApiKeyInfo[] = [];
-  for (const info of apiKeys.values()) {
-    if (info.siteId === siteId) {
-      keys.push(info);
-    }
-  }
-  return keys;
-}
-
-function randomString(length: number): string {
-  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-  let result = "";
-  for (let i = 0; i < length; i++) {
-    result += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return result;
+export async function listApiKeys(siteId: string) {
+  const apiKeyService = getApiKeyService();
+  return apiKeyService.listKeys(siteId);
 }
 
 export default router;

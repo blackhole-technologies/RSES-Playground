@@ -16,6 +16,7 @@
 import { db } from "../db";
 import { eq, and, desc, asc, count, like, inArray, sql, isNull } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
+import { safeLikePattern } from "../lib/sql-utils";
 import {
   contentTypes,
   fieldStorages,
@@ -447,7 +448,7 @@ export class DatabaseTermStorage implements TermStorage {
     const conditions = [eq(taxonomyTerms.vocabularyId, vocabularyId)];
 
     if (options?.name) {
-      conditions.push(like(taxonomyTerms.name, `%${options.name}%`));
+      conditions.push(like(taxonomyTerms.name, safeLikePattern(options.name)));
     }
 
     // Get total count
@@ -610,7 +611,7 @@ export class DatabaseContentStorage implements ContentStorage {
       conditions.push(eq(contents.sticky, options.sticky));
     }
     if (options?.search) {
-      conditions.push(like(contents.title, `%${options.search}%`));
+      conditions.push(like(contents.title, safeLikePattern(options.search)));
     }
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;

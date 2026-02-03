@@ -2,8 +2,9 @@
  * @file admin-users.ts
  * @description Admin routes for user management
  * @phase Phase 2 - User Management UI
- * @version 0.6.6
+ * @version 0.6.7
  * @created 2026-02-02
+ * @modified 2026-02-03 - Added password complexity validation (MEDIUM-004)
  */
 
 import { Router } from "express";
@@ -14,6 +15,7 @@ import { eq, desc, ilike, or, sql, count } from "drizzle-orm";
 import { hashPassword, toSafeUser } from "../auth/passport";
 import { requireAdmin } from "../auth/session";
 import { createModuleLogger } from "../logger";
+import { passwordComplexitySchema, optionalPasswordComplexitySchema } from "../auth/password-validation";
 
 const log = createModuleLogger("admin-users");
 const router = Router();
@@ -139,9 +141,7 @@ const createUserSchema = z.object({
     .min(3, "Username must be at least 3 characters")
     .max(50, "Username must be less than 50 characters")
     .regex(/^[a-zA-Z0-9_-]+$/, "Username can only contain letters, numbers, underscores, and dashes"),
-  password: z.string()
-    .min(8, "Password must be at least 8 characters")
-    .max(128, "Password must be less than 128 characters"),
+  password: passwordComplexitySchema,
   email: z.string().email("Invalid email address").optional().nullable(),
   displayName: z.string().max(100, "Display name must be less than 100 characters").optional().nullable(),
   isAdmin: z.boolean().optional().default(false),
@@ -217,10 +217,7 @@ const updateUserSchema = z.object({
   email: z.string().email("Invalid email address").optional().nullable(),
   displayName: z.string().max(100, "Display name must be less than 100 characters").optional().nullable(),
   isAdmin: z.boolean().optional(),
-  password: z.string()
-    .min(8, "Password must be at least 8 characters")
-    .max(128, "Password must be less than 128 characters")
-    .optional(),
+  password: optionalPasswordComplexitySchema,
 });
 
 /**
@@ -388,9 +385,7 @@ router.post("/:id/toggle-admin", async (req, res) => {
 // =============================================================================
 
 const resetPasswordSchema = z.object({
-  password: z.string()
-    .min(8, "Password must be at least 8 characters")
-    .max(128, "Password must be less than 128 characters"),
+  password: passwordComplexitySchema,
 });
 
 /**
