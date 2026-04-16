@@ -189,6 +189,8 @@ export interface HourDistribution {
 export interface LocationPattern {
   /** Country code */
   countryCode: string;
+  /** Country name (added 2026-04-14 to match call sites) */
+  country?: string;
   /** Region */
   region?: string;
   /** City */

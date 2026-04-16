@@ -212,8 +212,8 @@ export {
 
 import { TaxonomyEngine, createTaxonomyEngine } from "./taxonomy-engine";
 import { RsesConfig } from "../lib/rses";
-import { MLTaxonomyEngine, createDefaultMLConfig, MLTaxonomyEngineConfig } from "./ml-taxonomy-engine";
-import { createVectorDatabaseFromEnv, VectorDatabase } from "./vector-database";
+import { MLTaxonomyEngine, createDefaultMLConfig, MLTaxonomyEngineConfig, type VectorDatabase } from "./ml-taxonomy-engine";
+import { createVectorDatabaseFromEnv } from "./vector-database";
 import { createAutoTaxonomyLearner, AutoTaxonomyLearner } from "./auto-taxonomy-learner";
 
 /**

@@ -1,0 +1,76 @@
+-- FORCE tenant row-level security policies
+-- Migration: 0004_force_tenant_rls_policies
+-- Milestone: M1.4 Phase D (ROADMAP_2026-04-14_v6.md)
+-- Depends on: 0003_add_tenant_rls_policies
+--
+-- ============================================================================
+-- ⚠ DO NOT APPLY THIS MIGRATION WITHOUT EXPLICIT USER APPROVAL ⚠
+-- ============================================================================
+--
+-- This migration is **staged but not applied**. It has been written so
+-- the user can review the SQL and apply it manually once the Phase C
+-- integration tests (`npm run test:rls`) have been run against staging
+-- and verified green.
+--
+-- Apply procedure (for humans, not automated):
+--   1. Run the Phase C test suite against staging Postgres:
+--        TEST_DATABASE_URL=postgres://... npm run test:rls
+--      All tests must pass. If any test fails, DO NOT APPLY this
+--      migration — debug in staging until Phase C is green.
+--   2. Take a database snapshot of the target environment.
+--   3. Apply this migration inside a transaction so it can be rolled
+--      back if something goes wrong:
+--        BEGIN;
+--        \i migrations/0004_force_tenant_rls_policies.sql
+--        -- Run a smoke query that exercises scoped() against a real
+--        -- request path. Confirm it still works.
+--        -- If happy:
+--        COMMIT;
+--        -- If not:
+--        ROLLBACK;
+--   4. Update docs/STATUS-LATEST.md to record the apply and the
+--      environment it was applied to.
+--
+-- # Why this is a separate migration
+--
+-- `FORCE ROW LEVEL SECURITY` applies policies to every role, including
+-- the table owner and superusers. Any code path that bypasses the
+-- `withDbSiteScope` helper (see server/lib/tenant-scoped.ts) will
+-- start failing the moment this is applied. That includes:
+--
+--   - Direct `db.select().from(site_feature_overrides)` calls that did
+--     not go through `scoped(siteId)`.
+--   - Background jobs that iterate sites and need to see cross-tenant
+--     data (e.g. a reconciliation script).
+--   - Migration scripts that load or patch rows in bulk without
+--     setting app.current_site_id first.
+--
+-- All such bypasses must either be converted to use `scoped()` or
+-- explicitly call `SET LOCAL ROLE some_superuser` before their
+-- queries. Auditing every call site is the work that Phase C tests
+-- help expose.
+--
+-- # Rollback
+--
+-- To revert just this migration without touching 0003:
+--   ALTER TABLE site_feature_overrides NO FORCE ROW LEVEL SECURITY;
+--   ALTER TABLE feature_rollout_history NO FORCE ROW LEVEL SECURITY;
+--
+-- Rolling back does NOT drop the policies themselves — they remain
+-- active for non-superuser roles (the original 0003 state).
+-- ============================================================================
+
+-- Force policies to apply to every role on both tenant tables.
+-- After this, even the table owner cannot bypass the session-variable
+-- gate without first unsetting the force flag.
+
+ALTER TABLE "site_feature_overrides" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "feature_rollout_history" FORCE ROW LEVEL SECURITY;
+
+-- Verification query:
+--
+--   SELECT relname, relrowsecurity, relforcerowsecurity
+--   FROM pg_class
+--   WHERE relname IN ('site_feature_overrides', 'feature_rollout_history');
+--
+-- Expect both columns true on both tables after apply.

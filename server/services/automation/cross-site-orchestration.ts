@@ -474,12 +474,14 @@ export class FederationManager {
       timeout,
     };
 
+    // sendMessage returns T | void; the action-request flow is guaranteed
+    // to receive a response (or throw on timeout), so cast away the void.
     return this.sendMessage<ActionResponsePayload>(
       targetSiteId,
       CrossSiteMessageType.ACTION_REQUEST,
       payload,
       { timeout }
-    );
+    ) as Promise<ActionResponsePayload>;
   }
 
   /**

@@ -994,20 +994,25 @@ export class AutomationMonitor {
   }
 
   /**
-   * Gets run history.
+   * Gets run history with pagination.
    */
-  getRunHistory(options?: {
-    workflowId?: WorkflowId;
-    limit?: number;
-    offset?: number;
-    status?: ExecutionStatus;
-    startTime?: Date;
-    endTime?: Date;
-  }): AutomationRun[] {
-    if (options?.workflowId) {
-      return this.runHistory.getWorkflowRuns(options.workflowId, options);
-    }
-    return this.runHistory.getRecentRuns(options?.limit);
+  getRunHistory(limit: number = 20, offset: number = 0): AutomationRun[] {
+    const all = this.runHistory.getRecentRuns(limit + offset);
+    return all.slice(offset, offset + limit);
+  }
+
+  /**
+   * Gets summary statistics for the automation system.
+   */
+  getStats(): { totalRuns: number; activeRuns: number; alertCount: number } {
+    const allRuns = this.runHistory.getRecentRuns(this.runHistory["runs"].size);
+    const activeRuns = allRuns.filter((r) => r.status === "running").length;
+
+    return {
+      totalRuns: allRuns.length,
+      activeRuns,
+      alertCount: this.alertManager.getActiveAlerts().length,
+    };
   }
 
   /**

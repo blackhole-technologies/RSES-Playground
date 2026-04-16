@@ -88,79 +88,19 @@ export const GATEWAY_EVENTS = {
 // =============================================================================
 // RATE LIMITER
 // =============================================================================
+//
+// The rate limiter implementation lives in ./rate-limiter.ts as a swappable
+// backend. The gateway picks in-memory (default) or Redis-backed (when
+// REDIS_URL is set) at construction time via createRateLimiter().
+//
+// See server/kernel/rate-limiter.ts for the backend interface, the two
+// implementations, and the factory's degradation rules.
 
-/**
- * Simple in-memory rate limiter.
- *
- * @description Tracks request counts per key (IP or user ID) within
- * sliding time windows. Rejects requests that exceed the limit.
- *
- * In production, use Redis-backed rate limiting for distributed systems.
- */
-class RateLimiter {
-  /**
-   * Request counts by key.
-   * Structure: { key: { count, windowStart } }
-   */
-  private requests = new Map<
-    string,
-    { count: number; windowStart: number }
-  >();
-
-  /**
-   * Check if a request should be allowed.
-   *
-   * @param key - The rate limit key (IP, user ID, etc.)
-   * @param config - Rate limit configuration
-   * @returns Object with allowed flag and remaining requests
-   */
-  check(
-    key: string,
-    config: RateLimitConfig
-  ): { allowed: boolean; remaining: number; resetAt: Date } {
-    const now = Date.now();
-    const windowMs = config.windowSeconds * 1000;
-
-    // Get or create entry
-    let entry = this.requests.get(key);
-
-    // Check if window has expired
-    if (!entry || now - entry.windowStart >= windowMs) {
-      entry = { count: 0, windowStart: now };
-      this.requests.set(key, entry);
-    }
-
-    // Check limit
-    const remaining = config.maxRequests - entry.count;
-    const resetAt = new Date(entry.windowStart + windowMs);
-
-    if (entry.count >= config.maxRequests) {
-      return { allowed: false, remaining: 0, resetAt };
-    }
-
-    // Increment count
-    entry.count++;
-
-    return {
-      allowed: true,
-      remaining: remaining - 1,
-      resetAt,
-    };
-  }
-
-  /**
-   * Clean up expired entries.
-   * Call periodically to prevent memory leaks.
-   */
-  cleanup(maxAgeMs: number = 300000): void {
-    const now = Date.now();
-    for (const [key, entry] of this.requests) {
-      if (now - entry.windowStart >= maxAgeMs) {
-        this.requests.delete(key);
-      }
-    }
-  }
-}
+import {
+  createRateLimiter,
+  InMemoryRateLimiter,
+  type RateLimiterBackend,
+} from "./rate-limiter";
 
 // =============================================================================
 // API GATEWAY IMPLEMENTATION
@@ -217,9 +157,11 @@ export class ApiGateway implements IApiGateway {
   private events: IEventBus;
 
   /**
-   * Rate limiter instance.
+   * Rate limiter backend. Starts as in-memory, can be upgraded to a
+   * distributed Redis backend by calling enableRedisRateLimiter() during
+   * bootstrap before the gateway starts handling traffic.
    */
-  private rateLimiter = new RateLimiter();
+  private rateLimiter: RateLimiterBackend = new InMemoryRateLimiter();
 
   /**
    * Express app for the gateway.
@@ -253,9 +195,11 @@ export class ApiGateway implements IApiGateway {
     // Setup middleware
     this.setupMiddleware();
 
-    // Start cleanup interval
+    // Start cleanup interval. Only the in-memory backend needs periodic
+    // pruning; Redis handles its own expiration. The cleanup() call is a
+    // no-op when the backend doesn't implement it.
     this.cleanupInterval = setInterval(
-      () => this.rateLimiter.cleanup(),
+      () => this.rateLimiter.cleanup?.(),
       60000 // Every minute
     );
 
@@ -553,9 +497,14 @@ export class ApiGateway implements IApiGateway {
    * ```
    */
   middleware(): Express {
-    // Add rate limiting middleware
+    // Add rate limiting middleware. handleRateLimit is async (the Redis
+    // backend's check() is a real network call); we forward any
+    // unexpected rejection to express's error pipeline via next(err).
+    // The backend itself never throws on transport errors — it fails
+    // open — so this catch is purely a defense against bugs in the
+    // limiter implementation.
     this.app.use((req, res, next) => {
-      this.handleRateLimit(req, res, next);
+      this.handleRateLimit(req, res, next).catch(next);
     });
 
     // Add auth middleware
@@ -567,13 +516,15 @@ export class ApiGateway implements IApiGateway {
   }
 
   /**
-   * Handle rate limiting.
+   * Handle rate limiting. Async because the Redis backend's check() is
+   * a real network call. Express handles async handlers natively as long
+   * as we either await or call next(err) on rejection.
    */
-  private handleRateLimit(
+  private async handleRateLimit(
     req: Request,
     res: Response,
     next: NextFunction
-  ): void {
+  ): Promise<void> {
     const route = this.findRoute(req.method, req.path);
     if (!route || !route.rateLimit) {
       return next();
@@ -589,8 +540,10 @@ export class ApiGateway implements IApiGateway {
       key = `ip:${req.ip}:${route.path}`;
     }
 
-    // Check rate limit
-    const result = this.rateLimiter.check(key, config);
+    // Check rate limit. The backend's check() never throws — it fails open
+    // on Redis errors and returns allowed:true so a Redis outage does not
+    // take down the API surface. See rate-limiter.ts for the rationale.
+    const result = await this.rateLimiter.check(key, config);
 
     // Set rate limit headers
     res.setHeader("X-RateLimit-Limit", config.maxRequests);
@@ -602,9 +555,13 @@ export class ApiGateway implements IApiGateway {
         key,
         path: route.path,
         resetAt: result.resetAt,
+        backend: this.rateLimiter.backendName,
       });
 
-      log.warn({ key, path: route.path }, "Rate limit exceeded");
+      log.warn(
+        { key, path: route.path, backend: this.rateLimiter.backendName },
+        "Rate limit exceeded"
+      );
 
       res.status(429).json({
         error: "Too Many Requests",
@@ -617,6 +574,32 @@ export class ApiGateway implements IApiGateway {
     }
 
     next();
+  }
+
+  /**
+   * Upgrade the rate limiter from in-memory to a Redis-backed backend.
+   * Call once during bootstrap before the gateway starts handling traffic.
+   * Idempotent — calling twice closes the previous backend first.
+   *
+   * @example
+   *   await gateway.enableRedisRateLimiter({ redisUrl: process.env.REDIS_URL });
+   */
+  async enableRedisRateLimiter(options: {
+    redisUrl?: string;
+    redisKeyPrefix?: string;
+  }): Promise<void> {
+    if (!options.redisUrl) {
+      log.info("enableRedisRateLimiter called without a redisUrl; keeping in-memory backend");
+      return;
+    }
+    const next = await createRateLimiter(options);
+    if (next.backendName === this.rateLimiter.backendName) return;
+    const previous = this.rateLimiter;
+    this.rateLimiter = next;
+    await previous.close().catch((err) => {
+      log.warn({ err }, "Failed to close previous rate limiter backend");
+    });
+    log.info({ backend: next.backendName }, "Rate limiter backend swapped");
   }
 
   /**

@@ -310,6 +310,26 @@ export type {
 // ==================== Initialization ====================
 
 import { createModuleLogger } from "../logger";
+// The initializeCQRSES and shutdownCQRSES functions below call the singleton
+// getters and resetters from each submodule. They were previously re-exported
+// at the top of this file but never imported into local scope, so TypeScript
+// reported "Cannot find name" for every reference. The fix is to import them
+// here as well; the `export { … }` blocks above continue to expose them to
+// external callers.
+import { getEventStore, resetEventStore } from "./event-store";
+import { getCommandBus, resetCommandBus } from "./command-bus";
+import { getQueryBus, resetQueryBus } from "./query-bus";
+import { getSagaOrchestrator, resetSagaOrchestrator } from "./saga";
+import { getActorSystem, resetActorSystem } from "./actor";
+import {
+  getTracer,
+  getMetricsCollector,
+  getAlertManager,
+  getHealthChecker,
+  resetObservability,
+} from "./observability";
+import { getAIOpsEngine, resetAIOpsEngine } from "./aiops";
+
 const log = createModuleLogger("cqrs-es");
 
 /**

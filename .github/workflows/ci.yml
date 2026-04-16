@@ -7,7 +7,59 @@ on:
     branches: [main]
 
 jobs:
+  # Security suite gate (added 2026-04-14, ROADMAP M1.6).
+  # Runs the focused security test suite (~350 tests) without requiring a
+  # database. Must pass before any other job — the security tests cover
+  # auth, RBAC markers, tenant isolation, expression DoS guards, and module
+  # sandboxing. A failure here means the change weakens a critical defense.
+  security-tests:
+    name: Security tests (fast, no DB)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run security test suite
+        run: npm run test:security
+
+  # Type checking gate (added 2026-04-14, hardened 2026-04-14 evening).
+  # Runs `tsc --noEmit` to catch type errors. The 691-error baseline that
+  # existed when this job was first added has been driven to zero.
+  # `continue-on-error` was removed and the job is now a HARD gate — any
+  # new type error blocks merge. Keep it that way.
+  typecheck:
+    name: TypeScript typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run check
+
+  # Full build + test (existing job). Depends on security-tests so a
+  # security failure shortcircuits the build and saves CI minutes.
   build-and-test:
+    name: Build and test
+    needs: [security-tests]
     runs-on: ubuntu-latest
 
     services:

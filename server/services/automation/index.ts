@@ -79,7 +79,11 @@ export {
   type NodePosition,
 } from "./workflow-engine";
 
-// Cross-site orchestration
+// Cross-site orchestration. Local import for use by shutdownAutomationEngine
+// below — the export-from block re-exports for external callers but doesn't
+// bring the symbol into local scope.
+import { getFederationManager } from "./cross-site-orchestration";
+
 export {
   FederationManager,
   initializeFederationManager,
@@ -261,5 +265,6 @@ export function shutdownAutomationEngine(): void {
   }
 }
 
-// Re-export getFederationManager for convenience
-export { getFederationManager } from "./cross-site-orchestration";
+// getFederationManager is already exported earlier in this file via the
+// `Cross-site orchestration` export block (line ~86). The duplicate
+// trailing re-export was removed 2026-04-14 to fix TS2300 errors.

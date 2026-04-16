@@ -20,12 +20,14 @@ import type {
   WSAuthRequestMessage,
   WSMessageSendMessage,
   WSChannelJoinMessage,
+  WSChannelLeaveMessage,
   WSTypingStartMessage,
+  WSTypingStopMessage,
   WSPresenceUpdateMessage,
   MESSAGING_WS_PROTOCOL,
   MESSAGING_WS_ERROR_CODES,
 } from "@shared/messaging/ws-protocol";
-import type { UserPresenceInfo } from "@shared/messaging/types";
+import type { UserPresenceInfo, MessageMention } from "@shared/messaging/types";
 
 import { MessagingService } from "./messaging-service";
 import { VoiceTranscriptionService } from "./voice-transcription-service";
@@ -352,7 +354,10 @@ export class MessagingWSHandler extends EventEmitter {
           break;
 
         case "typing:stop":
-          await this.handleTypingStop(client, message as WSTypingStartMessage);
+          // Use the correct stop-message type rather than reusing the
+          // start message type. They share fields but are nominally
+          // distinct in the protocol definition.
+          await this.handleTypingStop(client, message as WSTypingStopMessage);
           break;
 
         // Channels
@@ -361,7 +366,7 @@ export class MessagingWSHandler extends EventEmitter {
           break;
 
         case "channel:leave":
-          await this.handleChannelLeave(client, message as WSChannelJoinMessage);
+          await this.handleChannelLeave(client, message as WSChannelLeaveMessage);
           break;
 
         // Messages
@@ -460,7 +465,7 @@ export class MessagingWSHandler extends EventEmitter {
    */
   private async handleTypingStop(
     client: AuthenticatedClient,
-    message: WSTypingStartMessage
+    message: WSTypingStopMessage
   ): Promise<void> {
     this.messagingService.stopTyping(message.channelId, client.userId);
   }
@@ -517,7 +522,7 @@ export class MessagingWSHandler extends EventEmitter {
    */
   private async handleChannelLeave(
     client: AuthenticatedClient,
-    message: WSChannelJoinMessage
+    message: WSChannelLeaveMessage
   ): Promise<void> {
     const { channelId } = message;
 
@@ -545,7 +550,10 @@ export class MessagingWSHandler extends EventEmitter {
         content: message.content,
         contentType: message.contentType as any,
         attachmentIds: message.attachmentIds,
-        mentions: message.mentions,
+        // The wire shape uses `type: string` while MessageMention narrows
+        // to a literal union. Cast at this boundary; the messaging service
+        // validates the actual values upstream.
+        mentions: message.mentions as Omit<MessageMention, "startIndex" | "endIndex">[] | undefined,
       },
       client.userId,
       client.userName

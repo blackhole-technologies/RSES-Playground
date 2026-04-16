@@ -48,6 +48,7 @@ import {
   insertTaxonomyTermSchema,
   insertContentSchema,
 } from "@shared/cms/schema";
+import type { DbInsertContent } from "@shared/cms/schema";
 
 const log = createModuleLogger("cms-routes");
 const router = Router();
@@ -75,13 +76,13 @@ router.get("/content-types", async (req, res) => {
  */
 router.get("/content-types/:id", async (req, res) => {
   try {
-    const type = await contentTypeStorage.get(req.params.id);
+    const type = await contentTypeStorage.get(String(req.params.id));
     if (!type) {
       return res.status(404).json({ message: "Content type not found" });
     }
     res.json(type);
   } catch (err) {
-    log.error({ err, id: req.params.id }, "Failed to get content type");
+    log.error({ err, id: String(req.params.id) }, "Failed to get content type");
     res.status(500).json({ message: "Failed to get content type" });
   }
 });
@@ -144,7 +145,7 @@ router.post("/content-types", requireAuth, async (req, res) => {
 router.put("/content-types/:id", requireAuth, async (req, res) => {
   try {
     const data = insertContentTypeSchema.partial().parse(req.body);
-    const type = await contentTypeStorage.update(req.params.id, data);
+    const type = await contentTypeStorage.update(String(req.params.id), data);
 
     if (!type) {
       return res.status(404).json({ message: "Content type not found" });
@@ -158,7 +159,7 @@ router.put("/content-types/:id", requireAuth, async (req, res) => {
         field: err.errors[0].path.join("."),
       });
     }
-    log.error({ err, id: req.params.id }, "Failed to update content type");
+    log.error({ err, id: String(req.params.id) }, "Failed to update content type");
     res.status(500).json({ message: "Failed to update content type" });
   }
 });
@@ -168,7 +169,7 @@ router.put("/content-types/:id", requireAuth, async (req, res) => {
  */
 router.delete("/content-types/:id", requireAuth, async (req, res) => {
   try {
-    const type = await contentTypeStorage.get(req.params.id);
+    const type = await contentTypeStorage.get(String(req.params.id));
 
     if (!type) {
       return res.status(404).json({ message: "Content type not found" });
@@ -181,17 +182,17 @@ router.delete("/content-types/:id", requireAuth, async (req, res) => {
       });
     }
 
-    if (await contentTypeStorage.hasContent(req.params.id)) {
+    if (await contentTypeStorage.hasContent(String(req.params.id))) {
       return res.status(400).json({
         message: "Cannot delete content type with existing content",
         reason: "has_content",
       });
     }
 
-    await contentTypeStorage.delete(req.params.id);
+    await contentTypeStorage.delete(String(req.params.id));
     res.status(204).send();
   } catch (err) {
-    log.error({ err, id: req.params.id }, "Failed to delete content type");
+    log.error({ err, id: String(req.params.id) }, "Failed to delete content type");
     res.status(500).json({ message: "Failed to delete content type" });
   }
 });
@@ -201,12 +202,12 @@ router.delete("/content-types/:id", requireAuth, async (req, res) => {
  */
 router.get("/content-types/:id/fields", async (req, res) => {
   try {
-    const type = await contentTypeStorage.get(req.params.id);
+    const type = await contentTypeStorage.get(String(req.params.id));
     if (!type) {
       return res.status(404).json({ message: "Content type not found" });
     }
 
-    const instances = await fieldInstanceRepo.getForBundle("content", req.params.id);
+    const instances = await fieldInstanceRepo.getForBundle("content", String(req.params.id));
 
     // Get corresponding storages
     const storageIds = new Set(instances.map((i) => `content.${i.fieldName}`));
@@ -215,7 +216,7 @@ router.get("/content-types/:id/fields", async (req, res) => {
 
     res.json({ instances, storages: relevantStorages });
   } catch (err) {
-    log.error({ err, id: req.params.id }, "Failed to get content type fields");
+    log.error({ err, id: String(req.params.id) }, "Failed to get content type fields");
     res.status(500).json({ message: "Failed to get fields" });
   }
 });
@@ -225,17 +226,17 @@ router.get("/content-types/:id/fields", async (req, res) => {
  */
 router.get("/content-types/:id/displays", async (req, res) => {
   try {
-    const type = await contentTypeStorage.get(req.params.id);
+    const type = await contentTypeStorage.get(String(req.params.id));
     if (!type) {
       return res.status(404).json({ message: "Content type not found" });
     }
 
-    const viewDisplays = await displayStorage.getViewDisplaysForBundle("content", req.params.id);
-    const formDisplays = await displayStorage.getFormDisplaysForBundle("content", req.params.id);
+    const viewDisplays = await displayStorage.getViewDisplaysForBundle("content", String(req.params.id));
+    const formDisplays = await displayStorage.getFormDisplaysForBundle("content", String(req.params.id));
 
     res.json({ viewDisplays, formDisplays });
   } catch (err) {
-    log.error({ err, id: req.params.id }, "Failed to get displays");
+    log.error({ err, id: String(req.params.id) }, "Failed to get displays");
     res.status(500).json({ message: "Failed to get displays" });
   }
 });
@@ -295,7 +296,7 @@ router.post("/field-storages", requireAuth, async (req, res) => {
  */
 router.delete("/field-storages/:id", requireAuth, async (req, res) => {
   try {
-    const instances = await fieldStorageRepo.getInstances(req.params.id);
+    const instances = await fieldStorageRepo.getInstances(String(req.params.id));
 
     if (instances.length > 0) {
       return res.status(400).json({
@@ -304,14 +305,14 @@ router.delete("/field-storages/:id", requireAuth, async (req, res) => {
       });
     }
 
-    const deleted = await fieldStorageRepo.delete(req.params.id);
+    const deleted = await fieldStorageRepo.delete(String(req.params.id));
     if (!deleted) {
       return res.status(404).json({ message: "Field storage not found" });
     }
 
     res.status(204).send();
   } catch (err) {
-    log.error({ err, id: req.params.id }, "Failed to delete field storage");
+    log.error({ err, id: String(req.params.id) }, "Failed to delete field storage");
     res.status(500).json({ message: "Failed to delete field storage" });
   }
 });
@@ -412,7 +413,7 @@ router.post("/field-instances", requireAuth, async (req, res) => {
 router.delete("/field-instances/:id", requireAuth, async (req, res) => {
   try {
     const deleteData = req.query.deleteData === "true";
-    const instance = await fieldInstanceRepo.get(req.params.id);
+    const instance = await fieldInstanceRepo.get(String(req.params.id));
 
     if (!instance) {
       return res.status(404).json({ message: "Field instance not found" });
@@ -421,13 +422,13 @@ router.delete("/field-instances/:id", requireAuth, async (req, res) => {
     // Optionally delete field data
     if (deleteData) {
       // This would delete all data for this field across all content
-      log.info({ instanceId: req.params.id }, "Deleting field data");
+      log.info({ instanceId: String(req.params.id) }, "Deleting field data");
     }
 
-    await fieldInstanceRepo.delete(req.params.id);
+    await fieldInstanceRepo.delete(String(req.params.id));
     res.status(204).send();
   } catch (err) {
-    log.error({ err, id: req.params.id }, "Failed to delete field instance");
+    log.error({ err, id: String(req.params.id) }, "Failed to delete field instance");
     res.status(500).json({ message: "Failed to delete field instance" });
   }
 });
@@ -442,9 +443,9 @@ router.delete("/field-instances/:id", requireAuth, async (req, res) => {
 router.get("/view-displays/:entityType/:bundle/:mode", async (req, res) => {
   try {
     const display = await displayStorage.getViewDisplay(
-      req.params.entityType,
-      req.params.bundle,
-      req.params.mode
+      String(req.params.entityType),
+      String(req.params.bundle),
+      String(req.params.mode)
     );
 
     if (!display) {
@@ -469,9 +470,9 @@ router.put("/view-displays/:entityType/:bundle/:mode", requireAuth, async (req, 
 
     const display = await displayStorage.saveViewDisplay({
       ...data,
-      entityType: req.params.entityType,
-      bundle: req.params.bundle,
-      mode: req.params.mode,
+      entityType: String(req.params.entityType),
+      bundle: String(req.params.bundle),
+      mode: String(req.params.mode),
     });
 
     res.json(display);
@@ -493,9 +494,9 @@ router.put("/view-displays/:entityType/:bundle/:mode", requireAuth, async (req, 
 router.get("/form-displays/:entityType/:bundle/:mode", async (req, res) => {
   try {
     const display = await displayStorage.getFormDisplay(
-      req.params.entityType,
-      req.params.bundle,
-      req.params.mode
+      String(req.params.entityType),
+      String(req.params.bundle),
+      String(req.params.mode)
     );
 
     if (!display) {
@@ -520,9 +521,9 @@ router.put("/form-displays/:entityType/:bundle/:mode", requireAuth, async (req, 
 
     const display = await displayStorage.saveFormDisplay({
       ...data,
-      entityType: req.params.entityType,
-      bundle: req.params.bundle,
-      mode: req.params.mode,
+      entityType: String(req.params.entityType),
+      bundle: String(req.params.bundle),
+      mode: String(req.params.mode),
     });
 
     res.json(display);
@@ -562,13 +563,13 @@ router.get("/vocabularies", async (req, res) => {
  */
 router.get("/vocabularies/:id", async (req, res) => {
   try {
-    const vocab = await vocabularyStorage.get(req.params.id);
+    const vocab = await vocabularyStorage.get(String(req.params.id));
     if (!vocab) {
       return res.status(404).json({ message: "Vocabulary not found" });
     }
     res.json(vocab);
   } catch (err) {
-    log.error({ err, id: req.params.id }, "Failed to get vocabulary");
+    log.error({ err, id: String(req.params.id) }, "Failed to get vocabulary");
     res.status(500).json({ message: "Failed to get vocabulary" });
   }
 });
@@ -608,7 +609,7 @@ router.post("/vocabularies", requireAuth, async (req, res) => {
 router.put("/vocabularies/:id", requireAuth, async (req, res) => {
   try {
     const data = insertTaxonomyVocabularySchema.partial().parse(req.body);
-    const vocab = await vocabularyStorage.update(req.params.id, data);
+    const vocab = await vocabularyStorage.update(String(req.params.id), data);
 
     if (!vocab) {
       return res.status(404).json({ message: "Vocabulary not found" });
@@ -622,7 +623,7 @@ router.put("/vocabularies/:id", requireAuth, async (req, res) => {
         field: err.errors[0].path.join("."),
       });
     }
-    log.error({ err, id: req.params.id }, "Failed to update vocabulary");
+    log.error({ err, id: String(req.params.id) }, "Failed to update vocabulary");
     res.status(500).json({ message: "Failed to update vocabulary" });
   }
 });
@@ -633,23 +634,23 @@ router.put("/vocabularies/:id", requireAuth, async (req, res) => {
 router.delete("/vocabularies/:id", requireAuth, async (req, res) => {
   try {
     const deleteTerms = req.query.deleteTerms !== "false";
-    const vocab = await vocabularyStorage.get(req.params.id);
+    const vocab = await vocabularyStorage.get(String(req.params.id));
 
     if (!vocab) {
       return res.status(404).json({ message: "Vocabulary not found" });
     }
 
-    const termCount = await vocabularyStorage.getTermCount(req.params.id);
+    const termCount = await vocabularyStorage.getTermCount(String(req.params.id));
     if (termCount > 0 && !deleteTerms) {
       return res.status(400).json({
         message: "Vocabulary has terms. Set deleteTerms=true to delete them.",
       });
     }
 
-    await vocabularyStorage.delete(req.params.id);
+    await vocabularyStorage.delete(String(req.params.id));
     res.status(204).send();
   } catch (err) {
-    log.error({ err, id: req.params.id }, "Failed to delete vocabulary");
+    log.error({ err, id: String(req.params.id) }, "Failed to delete vocabulary");
     res.status(500).json({ message: "Failed to delete vocabulary" });
   }
 });
@@ -659,13 +660,13 @@ router.delete("/vocabularies/:id", requireAuth, async (req, res) => {
  */
 router.get("/vocabularies/:id/tree", async (req, res) => {
   try {
-    const vocab = await vocabularyStorage.get(req.params.id);
+    const vocab = await vocabularyStorage.get(String(req.params.id));
     if (!vocab) {
       return res.status(404).json({ message: "Vocabulary not found" });
     }
 
     const maxDepth = parseInt(req.query.maxDepth as string) || 5;
-    const terms = await termStorage.getTree(req.params.id, maxDepth);
+    const terms = await termStorage.getTree(String(req.params.id), maxDepth);
 
     // Build tree structure
     const tree = buildTermTree(terms);
@@ -676,7 +677,7 @@ router.get("/vocabularies/:id/tree", async (req, res) => {
       termCount: terms.length,
     });
   } catch (err) {
-    log.error({ err, id: req.params.id }, "Failed to get vocabulary tree");
+    log.error({ err, id: String(req.params.id) }, "Failed to get vocabulary tree");
     res.status(500).json({ message: "Failed to get vocabulary tree" });
   }
 });
@@ -686,7 +687,7 @@ router.get("/vocabularies/:id/tree", async (req, res) => {
  */
 router.post("/vocabularies/:id/sync-rses", requireAuth, async (req, res) => {
   try {
-    const vocab = await vocabularyStorage.get(req.params.id);
+    const vocab = await vocabularyStorage.get(String(req.params.id));
     if (!vocab) {
       return res.status(404).json({ message: "Vocabulary not found" });
     }
@@ -701,14 +702,14 @@ router.post("/vocabularies/:id/sync-rses", requireAuth, async (req, res) => {
     const dryRun = req.body.dryRun ?? false;
 
     const result = await syncVocabularyWithRses({
-      vocabularyId: req.params.id,
+      vocabularyId: String(req.params.id),
       configId,
       dryRun,
     });
 
     res.json({ ...result, dryRun });
   } catch (err) {
-    log.error({ err, id: req.params.id }, "Failed to sync vocabulary with RSES");
+    log.error({ err, id: String(req.params.id) }, "Failed to sync vocabulary with RSES");
     res.status(500).json({ message: err instanceof Error ? err.message : "Sync failed" });
   }
 });
@@ -722,7 +723,7 @@ router.post("/vocabularies/:id/sync-rses", requireAuth, async (req, res) => {
  */
 router.get("/vocabularies/:vocabularyId/terms", async (req, res) => {
   try {
-    const vocab = await vocabularyStorage.get(req.params.vocabularyId);
+    const vocab = await vocabularyStorage.get(String(req.params.vocabularyId));
     if (!vocab) {
       return res.status(404).json({ message: "Vocabulary not found" });
     }
@@ -731,7 +732,7 @@ router.get("/vocabularies/:vocabularyId/terms", async (req, res) => {
     const limit = parseInt(req.query.limit as string) || 50;
     const name = req.query.name as string | undefined;
 
-    const result = await termStorage.list(req.params.vocabularyId, { page, limit, name });
+    const result = await termStorage.list(String(req.params.vocabularyId), { page, limit, name });
     res.json(result);
   } catch (err) {
     log.error({ err }, "Failed to list terms");
@@ -744,13 +745,13 @@ router.get("/vocabularies/:vocabularyId/terms", async (req, res) => {
  */
 router.get("/terms/:id", async (req, res) => {
   try {
-    const term = await termStorage.get(parseInt(req.params.id));
+    const term = await termStorage.get(parseInt(String(req.params.id)));
     if (!term) {
       return res.status(404).json({ message: "Term not found" });
     }
     res.json(term);
   } catch (err) {
-    log.error({ err, id: req.params.id }, "Failed to get term");
+    log.error({ err, id: String(req.params.id) }, "Failed to get term");
     res.status(500).json({ message: "Failed to get term" });
   }
 });
@@ -760,7 +761,7 @@ router.get("/terms/:id", async (req, res) => {
  */
 router.post("/vocabularies/:vocabularyId/terms", requireAuth, async (req, res) => {
   try {
-    const vocab = await vocabularyStorage.get(req.params.vocabularyId);
+    const vocab = await vocabularyStorage.get(String(req.params.vocabularyId));
     if (!vocab) {
       return res.status(404).json({ message: "Vocabulary not found" });
     }
@@ -768,7 +769,7 @@ router.post("/vocabularies/:vocabularyId/terms", requireAuth, async (req, res) =
     const data = insertTaxonomyTermSchema.omit({ vocabularyId: true }).parse(req.body);
 
     // Check for duplicate
-    const existing = await termStorage.getByName(req.params.vocabularyId, data.name);
+    const existing = await termStorage.getByName(String(req.params.vocabularyId), data.name);
     if (existing) {
       return res.status(409).json({
         message: "Term with this name already exists",
@@ -778,7 +779,7 @@ router.post("/vocabularies/:vocabularyId/terms", requireAuth, async (req, res) =
 
     const term = await termStorage.create({
       ...data,
-      vocabularyId: req.params.vocabularyId,
+      vocabularyId: String(req.params.vocabularyId),
     });
 
     res.status(201).json(term);
@@ -800,7 +801,7 @@ router.post("/vocabularies/:vocabularyId/terms", requireAuth, async (req, res) =
 router.put("/terms/:id", requireAuth, async (req, res) => {
   try {
     const data = insertTaxonomyTermSchema.partial().omit({ vocabularyId: true }).parse(req.body);
-    const term = await termStorage.update(parseInt(req.params.id), data);
+    const term = await termStorage.update(parseInt(String(req.params.id)), data);
 
     if (!term) {
       return res.status(404).json({ message: "Term not found" });
@@ -814,7 +815,7 @@ router.put("/terms/:id", requireAuth, async (req, res) => {
         field: err.errors[0].path.join("."),
       });
     }
-    log.error({ err, id: req.params.id }, "Failed to update term");
+    log.error({ err, id: String(req.params.id) }, "Failed to update term");
     res.status(500).json({ message: "Failed to update term" });
   }
 });
@@ -825,7 +826,7 @@ router.put("/terms/:id", requireAuth, async (req, res) => {
 router.delete("/terms/:id", requireAuth, async (req, res) => {
   try {
     const deleteChildren = req.query.deleteChildren === "true";
-    const term = await termStorage.get(parseInt(req.params.id));
+    const term = await termStorage.get(parseInt(String(req.params.id)));
 
     if (!term) {
       return res.status(404).json({ message: "Term not found" });
@@ -842,7 +843,7 @@ router.delete("/terms/:id", requireAuth, async (req, res) => {
     await termStorage.delete(term.id);
     res.status(204).send();
   } catch (err) {
-    log.error({ err, id: req.params.id }, "Failed to delete term");
+    log.error({ err, id: String(req.params.id) }, "Failed to delete term");
     res.status(500).json({ message: "Failed to delete term" });
   }
 });
@@ -852,7 +853,7 @@ router.delete("/terms/:id", requireAuth, async (req, res) => {
  */
 router.post("/vocabularies/:vocabularyId/terms/reorder", requireAuth, async (req, res) => {
   try {
-    const vocab = await vocabularyStorage.get(req.params.vocabularyId);
+    const vocab = await vocabularyStorage.get(String(req.params.vocabularyId));
     if (!vocab) {
       return res.status(404).json({ message: "Vocabulary not found" });
     }
@@ -930,7 +931,7 @@ router.get("/content/:id", async (req, res) => {
     const includeFields = req.query.includeFields !== "false";
     const revisionNumber = req.query.revision ? parseInt(req.query.revision as string) : undefined;
 
-    const content = await contentStorage.get(parseInt(req.params.id));
+    const content = await contentStorage.get(parseInt(String(req.params.id)));
     if (!content) {
       return res.status(404).json({ message: "Content not found" });
     }
@@ -955,7 +956,7 @@ router.get("/content/:id", async (req, res) => {
 
     res.json({ content, fields, type });
   } catch (err) {
-    log.error({ err, id: req.params.id }, "Failed to get content");
+    log.error({ err, id: String(req.params.id) }, "Failed to get content");
     res.status(500).json({ message: "Failed to get content" });
   }
 });
@@ -1011,7 +1012,10 @@ router.post("/content", requireAuth, async (req, res) => {
         createdBy: (req as any).user?.id,
       });
 
-      await contentStorage.update(content.id, { revisionId: 1 });
+      // revisionId is omitted from DbInsertContent (it's set during revision
+// creation) but we need to bump it on the parent row after writing the
+// initial revision. Cast through Partial<DbInsertContent> intentionally.
+await contentStorage.update(content.id, { revisionId: 1 } as Partial<DbInsertContent>);
     }
 
     // Get saved fields
@@ -1048,7 +1052,7 @@ router.put("/content/:id", requireAuth, async (req, res) => {
 
     const { content: contentData, fields, newRevision, revisionLogMessage } = schema.parse(req.body);
 
-    const existing = await contentStorage.get(parseInt(req.params.id));
+    const existing = await contentStorage.get(parseInt(String(req.params.id)));
     if (!existing) {
       return res.status(404).json({ message: "Content not found" });
     }
@@ -1100,7 +1104,9 @@ router.put("/content/:id", requireAuth, async (req, res) => {
         createdBy: (req as any).user?.id,
       });
 
-      await contentStorage.update(content.id, { revisionId: newRevisionNumber });
+      // Same revisionId cast as above — omitted from DbInsertContent but needs
+// to be updated on the parent row after writing a new revision.
+await contentStorage.update(content.id, { revisionId: newRevisionNumber } as Partial<DbInsertContent>);
       revision = newRevisionNumber;
     }
 
@@ -1119,7 +1125,7 @@ router.put("/content/:id", requireAuth, async (req, res) => {
         field: err.errors[0].path.join("."),
       });
     }
-    log.error({ err, id: req.params.id }, "Failed to update content");
+    log.error({ err, id: String(req.params.id) }, "Failed to update content");
     res.status(500).json({ message: "Failed to update content" });
   }
 });
@@ -1129,7 +1135,7 @@ router.put("/content/:id", requireAuth, async (req, res) => {
  */
 router.delete("/content/:id", requireAuth, async (req, res) => {
   try {
-    const content = await contentStorage.get(parseInt(req.params.id));
+    const content = await contentStorage.get(parseInt(String(req.params.id)));
     if (!content) {
       return res.status(404).json({ message: "Content not found" });
     }
@@ -1142,7 +1148,7 @@ router.delete("/content/:id", requireAuth, async (req, res) => {
 
     res.status(204).send();
   } catch (err) {
-    log.error({ err, id: req.params.id }, "Failed to delete content");
+    log.error({ err, id: String(req.params.id) }, "Failed to delete content");
     res.status(500).json({ message: "Failed to delete content" });
   }
 });
@@ -1154,7 +1160,7 @@ router.patch("/content/:id/publish", requireAuth, async (req, res) => {
   try {
     const { published } = z.object({ published: z.boolean() }).parse(req.body);
 
-    const content = await contentStorage.setPublished(parseInt(req.params.id), published);
+    const content = await contentStorage.setPublished(parseInt(String(req.params.id)), published);
     if (!content) {
       return res.status(404).json({ message: "Content not found" });
     }
@@ -1167,7 +1173,7 @@ router.patch("/content/:id/publish", requireAuth, async (req, res) => {
         field: err.errors[0].path.join("."),
       });
     }
-    log.error({ err, id: req.params.id }, "Failed to update publish status");
+    log.error({ err, id: String(req.params.id) }, "Failed to update publish status");
     res.status(500).json({ message: "Failed to update publish status" });
   }
 });
@@ -1177,7 +1183,7 @@ router.patch("/content/:id/publish", requireAuth, async (req, res) => {
  */
 router.post("/content/:id/classify", requireAuth, async (req, res) => {
   try {
-    const content = await contentStorage.get(parseInt(req.params.id));
+    const content = await contentStorage.get(parseInt(String(req.params.id)));
     if (!content) {
       return res.status(404).json({ message: "Content not found" });
     }
@@ -1197,7 +1203,7 @@ router.post("/content/:id/classify", requireAuth, async (req, res) => {
 
     res.json(result);
   } catch (err) {
-    log.error({ err, id: req.params.id }, "Failed to classify content");
+    log.error({ err, id: String(req.params.id) }, "Failed to classify content");
     res.status(500).json({ message: err instanceof Error ? err.message : "Classification failed" });
   }
 });
@@ -1207,7 +1213,7 @@ router.post("/content/:id/classify", requireAuth, async (req, res) => {
  */
 router.get("/content/:id/revisions", async (req, res) => {
   try {
-    const content = await contentStorage.get(parseInt(req.params.id));
+    const content = await contentStorage.get(parseInt(String(req.params.id)));
     if (!content) {
       return res.status(404).json({ message: "Content not found" });
     }
@@ -1218,7 +1224,7 @@ router.get("/content/:id/revisions", async (req, res) => {
     const result = await revisionStorage.list(content.id, { page, limit });
     res.json(result);
   } catch (err) {
-    log.error({ err, id: req.params.id }, "Failed to list revisions");
+    log.error({ err, id: String(req.params.id) }, "Failed to list revisions");
     res.status(500).json({ message: "Failed to list revisions" });
   }
 });
@@ -1228,14 +1234,14 @@ router.get("/content/:id/revisions", async (req, res) => {
  */
 router.post("/content/:id/revisions/:revisionNumber/restore", requireAuth, async (req, res) => {
   try {
-    const content = await contentStorage.get(parseInt(req.params.id));
+    const content = await contentStorage.get(parseInt(String(req.params.id)));
     if (!content) {
       return res.status(404).json({ message: "Content not found" });
     }
 
     const revision = await revisionStorage.get(
       content.id,
-      parseInt(req.params.revisionNumber)
+      parseInt(String(req.params.revisionNumber))
     );
     if (!revision) {
       return res.status(404).json({ message: "Revision not found" });
@@ -1269,7 +1275,9 @@ router.post("/content/:id/revisions/:revisionNumber/restore", requireAuth, async
       createdBy: (req as any).user?.id,
     });
 
-    await contentStorage.update(content.id, { revisionId: newRevisionNumber });
+    // Same revisionId cast as above — omitted from DbInsertContent but needs
+// to be updated on the parent row after writing a new revision.
+await contentStorage.update(content.id, { revisionId: newRevisionNumber } as Partial<DbInsertContent>);
 
     const updatedContent = await contentStorage.get(content.id);
 

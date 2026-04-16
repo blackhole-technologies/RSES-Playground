@@ -30,6 +30,7 @@
  * │      ├── Module Registry                                            │
  * │      │   ├── Auth Module ──────┐                                   │
  * │      │   ├── Content Module ───┤── /api/modules/*                   │
+ * │      │   ├── CQRS Module ──────┤                                   │
  * │      │   └── (other modules) ──┘                                   │
  * │      └── API Gateway                                                │
  * │                                                                      │
@@ -73,6 +74,7 @@ import type {
 import { readdir, access, writeFile, mkdir } from "fs/promises";
 import { moduleConfigStorage } from "./storage";
 import { requireAuth, requireAdmin } from "./auth/session";
+import { createModuleSandbox, getSandboxConfigForTier, getViolationLog } from "./kernel/sandbox";
 
 const log = createModuleLogger("kernel-integration");
 
@@ -496,6 +498,9 @@ async function discoverModules(modulesDir: string): Promise<IModule[]> {
     }
 
     try {
+      // Attempt a preliminary import to discover the module manifest and
+      // determine its tier. This initial import is unsandboxed because we
+      // need the manifest to decide whether sandboxing is required.
       const moduleExports = await import(modulePath);
 
       const ModuleClass =
@@ -507,8 +512,24 @@ async function discoverModules(modulesDir: string): Promise<IModule[]> {
 
       if (ModuleClass) {
         const instance = new ModuleClass();
+        const tier = instance.manifest?.tier;
+        const moduleId = instance.manifest?.id ?? entry.name;
+        const moduleDir = path.join(modulesDir, entry.name);
+
+        // Apply sandbox for non-trusted tiers
+        const sandboxConfig = getSandboxConfigForTier(tier, moduleDir, moduleId);
+        if (sandboxConfig) {
+          const sandbox = createModuleSandbox(sandboxConfig);
+          log.info(
+            { moduleId, tier, sandbox: sandboxConfig.label },
+            "Module loaded with sandbox restrictions"
+          );
+          // Store sandbox reference on the instance for later disposal
+          (instance as any).__sandbox = sandbox;
+        }
+
         modules.push(instance);
-        log.debug({ moduleId: instance.manifest?.id }, "Module discovered");
+        log.debug({ moduleId, tier, sandboxed: !!sandboxConfig }, "Module discovered");
       } else {
         log.warn({ modulePath }, "No module class found");
       }
@@ -611,18 +632,8 @@ function setupKernelAdminRoutes(
   events: IEventBus
 ): void {
   // P0 SECURITY: Require authentication and admin role for all kernel routes
-  // In development, inject a dev admin user if not authenticated
-  if (process.env.NODE_ENV !== "production") {
-    app.use("/api/kernel", (req: any, res, next) => {
-      if (!req.isAuthenticated || !req.isAuthenticated()) {
-        // Inject dev admin user for unauthenticated requests
-        req.user = { id: "dev-admin", email: "dev@localhost", isAdmin: true };
-        req.isAuthenticated = () => true;
-      }
-      next();
-    });
-  }
-  // Always apply auth checks (dev user passes, real users need real auth)
+  // Auth is enforced in ALL environments — no dev-mode bypass.
+  // Developers must authenticate like any other user.
   app.use("/api/kernel", requireAuth, requireAdmin);
 
   // GET /api/kernel/modules - List all modules
@@ -972,6 +983,20 @@ function setupKernelAdminRoutes(
           });
         }
 
+        // Apply sandbox based on module tier. Dynamically installed modules
+        // default to "third-party" if no tier is declared, which gets the
+        // strictest sandbox configuration.
+        const tier = instance.manifest.tier ?? "third-party";
+        const sandboxConfig = getSandboxConfigForTier(tier, moduleDir, moduleId);
+        if (sandboxConfig) {
+          const sandbox = createModuleSandbox(sandboxConfig);
+          (instance as any).__sandbox = sandbox;
+          log.info(
+            { moduleId, tier, sandbox: sandboxConfig.label },
+            "Dynamically installed module sandboxed"
+          );
+        }
+
         // Register and load the module
         registry.register(instance);
         const loadResult = await registry.load(instance.manifest.id, {
@@ -1078,6 +1103,16 @@ function setupKernelAdminRoutes(
         error: error instanceof Error ? error.message : "Failed to uninstall module",
       });
     }
+  });
+
+  // GET /api/kernel/sandbox/violations - View sandbox permission violations
+  app.get("/api/kernel/sandbox/violations", (req, res) => {
+    const limit = parseInt(req.query.limit as string, 10) || 50;
+    const violations = getViolationLog(limit);
+    res.json({
+      total: violations.length,
+      violations,
+    });
   });
 
   log.debug("Kernel admin routes registered");

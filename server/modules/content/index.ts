@@ -338,7 +338,9 @@ export class ContentModule implements IModule {
 
     // Listen for auth events (optional integration)
     events.on("auth:login", async (event) => {
-      logger.debug({ userId: event.data.userId }, "User logged in - content module notified");
+      // event.data is unknown until validated; narrow once for the log.
+      const data = event.data as { userId?: string } | undefined;
+      logger.debug({ userId: data?.userId }, "User logged in - content module notified");
     });
 
     logger.info("Content module initialized");
@@ -408,8 +410,16 @@ export class ContentModule implements IModule {
     // POST /configs - Create config (requires auth via middleware)
     router.post("/configs", async (req: Request, res: Response) => {
       try {
-        const input = api.configs.create.input.parse(req.body);
+        const parsed = api.configs.create.input.parse(req.body);
         const userId = (req as any).user?.id;
+        // The Zod insert schema includes optional fields like userId and
+        // a nullable description; the service expects a narrower shape.
+        // Strip userId and coerce nulls to undefined.
+        const input = {
+          name: parsed.name,
+          content: parsed.content,
+          description: parsed.description ?? undefined,
+        };
         const config = await service.createConfig(input, userId);
         res.status(201).json(config);
       } catch (err) {
@@ -427,8 +437,14 @@ export class ContentModule implements IModule {
     // PUT /configs/:id - Update config (requires auth via middleware)
     router.put("/configs/:id", async (req: Request, res: Response) => {
       try {
-        const input = api.configs.update.input.parse(req.body);
+        const parsed = api.configs.update.input.parse(req.body);
         const userId = (req as any).user?.id;
+        // Same narrowing as POST /configs above.
+        const input = {
+          name: parsed.name,
+          content: parsed.content,
+          description: parsed.description ?? undefined,
+        };
         const config = await service.updateConfig(Number(req.params.id), input, userId);
         if (!config) {
           return res.status(404).json({ message: "Config not found" });
@@ -569,7 +585,14 @@ export class ContentModule implements IModule {
       try {
         const input = batchApi.updateConfigs.input.parse(req.body);
         const userId = (req as any).user?.id;
-        const result = await service.bulkUpdateConfigs(input.ids, input.updates, userId);
+        // bulkUpdateConfigs expects narrow updates; cast to strip nullable
+        // descriptions and any extra fields the Zod schema includes.
+        const updates = {
+          name: input.updates.name,
+          content: input.updates.content,
+          description: input.updates.description ?? undefined,
+        };
+        const result = await service.bulkUpdateConfigs(input.ids, updates, userId);
         res.json(result);
       } catch (err) {
         if (err instanceof z.ZodError) {

@@ -152,9 +152,14 @@ export const viewDisplays = pgTable("cms_view_displays", {
   index("idx_view_display_entity_bundle").on(table.entityType, table.bundle),
 ]);
 
+// `id` is omitted as a required field because the storage layer derives
+// it from `${entityType}.${bundle}.${mode}` if not provided. Callers may
+// still supply an explicit id to force a specific value.
 export const insertViewDisplaySchema = createInsertSchema(viewDisplays).omit({
   createdAt: true,
   updatedAt: true,
+}).extend({
+  id: z.string().optional(),
 });
 
 export type DbViewDisplay = typeof viewDisplays.$inferSelect;
@@ -188,9 +193,12 @@ export const formDisplays = pgTable("cms_form_displays", {
   index("idx_form_display_entity_bundle").on(table.entityType, table.bundle),
 ]);
 
+// Same id-optional pattern as insertViewDisplaySchema.
 export const insertFormDisplaySchema = createInsertSchema(formDisplays).omit({
   createdAt: true,
   updatedAt: true,
+}).extend({
+  id: z.string().optional(),
 });
 
 export type DbFormDisplay = typeof formDisplays.$inferSelect;

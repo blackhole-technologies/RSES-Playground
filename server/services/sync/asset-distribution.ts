@@ -793,7 +793,10 @@ export class AssetDistributionService extends EventEmitter {
 export class LazyReplicationProxy {
   private assetService: AssetDistributionService;
   private localStore: AssetStore;
-  private pendingRequests: Map<string, Promise<Buffer>>;
+  // pendingRequests holds in-flight fetchAndStore promises which return
+  // Buffer | null (null when the asset isn't found locally after the
+  // poll loop). The Map value type matches the function return type.
+  private pendingRequests: Map<string, Promise<Buffer | null>>;
   private hitRate: { hits: number; misses: number };
 
   constructor(assetService: AssetDistributionService, localStore: AssetStore) {
@@ -881,16 +884,5 @@ export class LazyReplicationProxy {
 // =============================================================================
 // EXPORTS
 // =============================================================================
-
-export {
-  BandwidthLimiter,
-  TransferQueue,
-  AssetDistributionService,
-  LazyReplicationProxy,
-  AssetSyncState,
-  AssetPriority,
-  AssetTransferRequest,
-  AssetSyncOptions,
-  AssetSyncStats,
-  CDNPurgeRequest,
-};
+// All classes and types above are inline-exported. Trailing block removed
+// 2026-04-14 to fix duplicate-export errors.

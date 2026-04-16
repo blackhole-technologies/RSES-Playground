@@ -2,6 +2,7 @@
 /**
  * @file file-watcher-daemon.ts
  * @description Standalone daemon for file watching service.
+ * @tier Tier 2 deployment — Daemon entry for file-watcher-cms.ts. See docs/architecture/FILE-WATCHERS.md.
  * @phase Phase 9 - CMS Content Type System
  * @author FW (File Watcher Specialist Agent)
  * @created 2026-02-01

@@ -358,7 +358,10 @@ export function rateLimit(config: RateLimitConfig) {
         await logSecurityEvent(
           auditService.contextFromRequest(req),
           "rate_limit_store_error",
-          failMode === 'closed' ? "denied" : "allowed",
+          // AuditOutcome union is "success" | "failure" | "denied".
+          // Map fail-open to "success" (request passed) and fail-closed
+          // to "denied".
+          failMode === 'closed' ? "denied" : "success",
           {
             error: errorMessage,
             path: req.path,

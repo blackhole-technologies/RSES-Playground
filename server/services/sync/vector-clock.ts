@@ -376,11 +376,13 @@ export class RevisionTree {
    */
   getRevisionPath(revisionId: string): string[] {
     const path: string[] = [];
+    // Map.get returns T | undefined, not T | null. Use undefined as the
+    // sentinel and the while loop reads cleanly.
     let current = this.nodeMap.get(revisionId);
 
     while (current) {
       path.unshift(current.revisionId);
-      current = current.parentId ? this.nodeMap.get(current.parentId) : null;
+      current = current.parentId ? this.nodeMap.get(current.parentId) : undefined;
     }
 
     return path;
@@ -473,22 +475,6 @@ export class RevisionTree {
 // =============================================================================
 // EXPORTS
 // =============================================================================
-
-export {
-  createVectorClock,
-  cloneVectorClock,
-  incrementClock,
-  mergeClock,
-  compareClocks,
-  descendsFrom,
-  areConcurrent,
-  getClockDepth,
-  serializeVectorClock,
-  parseVectorClock,
-  createChangeSequence,
-  parseChangeSequence,
-  compareSequences,
-  generateRevisionId,
-  getRevisionDepth,
-  isAncestor,
-};
+// Every function above is already inline-exported. A trailing
+// `export { … }` block here would produce TS2323 duplicate-export errors.
+// Removed 2026-04-14 (cleanup of pre-existing tech debt).

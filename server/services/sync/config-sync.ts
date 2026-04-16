@@ -149,7 +149,9 @@ export class ConfigExportService {
    * Export specific configs by ID
    */
   async exportByIds(
-    configs: Array<{ type: string; id: string }>,
+    // Narrow the input type to the ConfigItem.type union — callers should
+    // be passing valid types anyway, this just makes it enforced.
+    configs: Array<{ type: ConfigItem["type"]; id: string }>,
     name?: string
   ): Promise<ConfigExport> {
     const items: ConfigItem[] = [];
@@ -261,7 +263,11 @@ export class ConfigExportService {
         if (seen.has(depStr)) continue;
         seen.add(depStr);
 
-        const [type, id] = depStr.split(":");
+        const [rawType, id] = depStr.split(":");
+        // Cast the parsed string back to the ConfigItem.type union — the
+        // dependency strings come from extractDependencies() which only
+        // emits valid type values.
+        const type = rawType as ConfigItem["type"];
         const data = await this.configStore.getConfig(type, id);
 
         if (data) {
@@ -706,7 +712,9 @@ export class ConfigSyncManager extends EventEmitter {
   async export(options: {
     name?: string;
     types?: string[];
-    items?: Array<{ type: string; id: string }>;
+    // Type narrowed to ConfigItem.type union so exportByIds doesn't have
+    // to widen its parameter type.
+    items?: Array<{ type: ConfigItem["type"]; id: string }>;
   } = {}): Promise<ConfigExport> {
     this.setState("exporting");
 
@@ -916,12 +924,5 @@ export interface ModuleSyncResult {
 // =============================================================================
 // EXPORTS
 // =============================================================================
-
-export {
-  ConfigExportService,
-  ConfigImportService,
-  ConfigSyncManager,
-  ConfigSyncState,
-  ConfigValidationResult,
-  ConfigImportResult,
-};
+// All entries are inline-exported. Trailing block removed 2026-04-14 to
+// fix duplicate-export errors.

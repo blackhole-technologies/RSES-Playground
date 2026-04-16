@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { initializeOpenTelemetry, shutdownOpenTelemetry } from "./cqrs-es/opentelemetry-setup";
 import express, { type Request, Response, NextFunction } from "express";
 import cookieParser from "cookie-parser";
 import passport from "passport";
@@ -8,7 +9,7 @@ import { createServer as createHttpServer } from "http";
 import { createServer as createHttpsServer } from "https";
 import { readFileSync, existsSync } from "fs";
 import path from "path";
-import { createSecurityMiddleware, generateCsrfToken, csrfProtection } from "./middleware/security";
+import { createSecurityMiddleware, generateCsrfToken, csrfProtection, csrfTokenEndpoint } from "./middleware/security";
 import { configurePassport } from "./auth/passport";
 import { setupSession } from "./auth/session";
 import authRoutes from "./auth/routes";
@@ -22,6 +23,16 @@ import {
 } from "./logger";
 import { metricsMiddleware, registerMetricsRoute } from "./metrics";
 
+// Initialize OpenTelemetry (must be before any other imports that need instrumentation)
+if (process.env.OTEL_ENABLED === "true") {
+  initializeOpenTelemetry({
+    serviceName: process.env.OTEL_SERVICE_NAME || "rses-playground",
+    otlpEndpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
+    enableConsoleExporter: process.env.NODE_ENV !== "production",
+    samplingRatio: parseFloat(process.env.OTEL_SAMPLE_RATE || "1.0"),
+  });
+}
+
 // Kernel integration (optional - enable via ENABLE_KERNEL=true)
 import { initializeKernel, getKernel } from "./kernel-integration";
 import { createKernelWSBridge } from "./kernel";
@@ -33,6 +44,17 @@ import { createFeatureFlagsWSBridge } from "./services/feature-flags/ws-bridge";
 
 // OpenAPI documentation
 import openApiRoutes from "./openapi/routes";
+
+// ==========================================================================
+// PHASE 2 COMMUNICATION SERVICES - Imports
+// ==========================================================================
+import { initMessagingSystem, shutdownMessagingSystem } from "./services/messaging";
+import { initializeAutomationEngine, shutdownAutomationEngine } from "./services/automation";
+import { createPersonalAssistant, shutdownPersonalAssistant } from "./services/assistant";
+import messagingRoutes from "./routes/messaging";
+import automationRoutes from "./routes/automation";
+import assistantRoutes from "./routes/assistant";
+import { apiRateLimit } from "./middleware/rate-limit";
 
 const app = express();
 
@@ -89,6 +111,9 @@ app.use(cookieParser());
 
 // Generate CSRF token on first request
 app.use(generateCsrfToken());
+
+// CSRF token fetch endpoint - frontend calls this once at startup
+app.get("/api/csrf-token", csrfTokenEndpoint());
 
 // CSRF protection for state-changing requests
 app.use(csrfProtection({ enableCsrf: process.env.NODE_ENV === "production" }));
@@ -260,6 +285,78 @@ export function log(message: string, source = "express") {
     serverLog.info("Feature flags WebSocket bridge activated");
   }
 
+  // ==========================================================================
+  // PHASE 2 COMMUNICATION SERVICES
+  // ==========================================================================
+  // Messaging: real-time channels, messages, meetings, voice, encryption
+  // Automation: triggers, workflows, connectors, monitoring
+  // Assistant: AI conversation, calendar, tasks, suggestions
+  // ==========================================================================
+
+  let messagingInitialized = false;
+  let automationInitialized = false;
+  let assistantInitialized = false;
+
+  if (process.env.ENABLE_MESSAGING !== "false") {
+    try {
+      initMessagingSystem(httpServer, {
+        websocket: {
+          path: "/ws/messaging",
+          heartbeatInterval: 30000,
+          clientTimeout: 60000,
+          requireAuth: true,
+        },
+      });
+      messagingInitialized = true;
+      serverLog.info("Messaging system initialized");
+    } catch (error) {
+      serverLog.error({ error }, "Failed to initialize messaging system");
+    }
+  }
+
+  if (process.env.ENABLE_AUTOMATION !== "false") {
+    try {
+      initializeAutomationEngine({
+        siteName: process.env.SITE_NAME || "rses-playground",
+        siteUrl: process.env.SITE_URL || "http://localhost:5000",
+        encryptionKey: process.env.AUTOMATION_ENCRYPTION_KEY || "dev-key-must-be-at-least-32-chars!!",
+        enableCrossSite: process.env.ENABLE_CROSS_SITE === "true",
+        enableMonitoring: true,
+      });
+      automationInitialized = true;
+      serverLog.info("Automation engine initialized");
+    } catch (error) {
+      serverLog.error({ error }, "Failed to initialize automation engine");
+    }
+  }
+
+  if (process.env.ENABLE_ASSISTANT !== "false") {
+    try {
+      await createPersonalAssistant({
+        enableConversation: true,
+        enableCalendar: true,
+        enableVoice: false,
+        enableTasks: true,
+        enableNotifications: true,
+      });
+      assistantInitialized = true;
+      serverLog.info("AI Personal Assistant initialized");
+    } catch (error) {
+      serverLog.error({ error }, "Failed to initialize AI Personal Assistant");
+    }
+  }
+
+  // Mount Phase 2 routes (only if services initialized)
+  if (messagingInitialized) {
+    app.use("/api/messaging", apiRateLimit, messagingRoutes);
+  }
+  if (automationInitialized) {
+    app.use("/api/automation", apiRateLimit, automationRoutes);
+  }
+  if (assistantInitialized) {
+    app.use("/api/assistant", apiRateLimit, assistantRoutes);
+  }
+
   await registerRoutes(httpServer, app);
 
   // ==========================================================================
@@ -301,36 +398,41 @@ export function log(message: string, source = "express") {
       }
 
       // Register kernel shutdown with process signals
-      const originalShutdown = () => {
-        serverLog.info("Shutting down kernel...");
-        if (cleanupBridge) {
-          cleanupBridge();
-        }
-        if (cleanupFeatureFlagsBridge) {
-          cleanupFeatureFlagsBridge();
-        }
+      const originalShutdown = async () => {
+        serverLog.info("Shutting down...");
+        if (cleanupBridge) cleanupBridge();
+        if (cleanupFeatureFlagsBridge) cleanupFeatureFlagsBridge();
+        // Shutdown Phase 2 services
+        if (messagingInitialized) await shutdownMessagingSystem();
+        if (assistantInitialized) await shutdownPersonalAssistant();
+        if (automationInitialized) shutdownAutomationEngine();
         return kernel.shutdown();
       };
 
       process.on("SIGTERM", async () => {
         await originalShutdown();
+        await shutdownOpenTelemetry();
         process.exit(0);
       });
 
       process.on("SIGINT", async () => {
         await originalShutdown();
+        await shutdownOpenTelemetry();
         process.exit(0);
       });
     } catch (error) {
       serverLog.error({ error }, "Failed to initialize kernel");
     }
   } else {
-    // No kernel, but still register shutdown handlers for feature flags bridge
+    // No kernel, but still register shutdown handlers
     const handleShutdown = async () => {
       serverLog.info("Shutting down...");
-      if (cleanupFeatureFlagsBridge) {
-        cleanupFeatureFlagsBridge();
-      }
+      if (cleanupFeatureFlagsBridge) cleanupFeatureFlagsBridge();
+      // Shutdown Phase 2 services
+      if (messagingInitialized) await shutdownMessagingSystem();
+      if (assistantInitialized) await shutdownPersonalAssistant();
+      if (automationInitialized) shutdownAutomationEngine();
+      await shutdownOpenTelemetry();
       process.exit(0);
     };
 

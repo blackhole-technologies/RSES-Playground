@@ -22,12 +22,13 @@
 
 import { randomUUID } from "crypto";
 import { EventEmitter } from "events";
+// BackpressureStrategy is an enum used at runtime; the rest are pure types.
+import { BackpressureStrategy } from "./types";
 import type {
   Publisher,
   Subscriber,
   Subscription,
   Processor,
-  BackpressureStrategy,
   StreamConfig,
 } from "./types";
 import { createModuleLogger } from "../logger";
@@ -54,8 +55,13 @@ export class BaseSubscription implements Subscription {
   readonly id: string;
   protected requested: number = 0;
   protected cancelled: boolean = false;
-  protected onRequest?: (n: number) => void;
-  protected onCancel?: () => void;
+  // onRequest/onCancel are settable by external publishers (see
+  // IterablePublisher.subscribe and BufferedPublisher.subscribe). They were
+  // marked `protected` originally but the publisher-and-subscription
+  // collaboration pattern requires external assignment, so they are public.
+  // Changed 2026-04-14 to satisfy strict access checks.
+  public onRequest?: (n: number) => void;
+  public onCancel?: () => void;
 
   constructor() {
     this.id = randomUUID();
@@ -774,13 +780,14 @@ export class Stream<T> {
   take(n: number): Promise<T[]> {
     return new Promise((resolve, reject) => {
       const values: T[] = [];
-      let subscription: Subscription;
 
-      this.subscribe({
+      // Stream.subscribe returns the Subscription directly; capture it
+      // before the first onNext runs so cancel() is callable from inside.
+      const subscription = this.subscribe({
         onNext: (value) => {
           values.push(value);
           if (values.length >= n) {
-            subscription?.cancel();
+            subscription.cancel();
             resolve(values);
           }
         },

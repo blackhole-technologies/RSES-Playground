@@ -12,6 +12,13 @@ import { eq, and, or, ilike, inArray, sql, desc, asc, lte } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db, withCircuitBreaker } from "../../db";
 import { safeLikePattern } from "../../lib/sql-utils";
+// Tenant-scoping helpers. `scoped(siteId)` binds per-site queries to the
+// RLS session variable; `withDbSiteScope(siteId, fn)` is the escape hatch
+// for Drizzle query shapes (upsert, orderBy/limit, rowCount) that the
+// ScopedQueries interface does not cover. Required before migration 0004
+// (FORCE ROW LEVEL SECURITY) is applied — without the session variable,
+// Phase B policies silently filter every per-site read to zero rows.
+import { scoped, withDbSiteScope } from "../../lib/tenant-scoped";
 import {
   featureFlags,
   siteFeatureOverrides,
@@ -64,7 +71,10 @@ function rowToFlag(row: FeatureFlagRow): FeatureFlag {
     tags: row.tags ?? [],
     owner: row.owner ?? undefined,
     sunsetDate: row.sunsetDate ?? undefined,
-    targetingRules: row.targetingRules ?? [],
+    // The DB column stores targeting rules as jsonb<unknown[]>; cast through
+    // unknown to the application-level TargetingRule[] shape. Validation
+    // happens upstream when rules are written to the DB.
+    targetingRules: (row.targetingRules ?? []) as unknown as FeatureFlag["targetingRules"],
     changeHistory: row.changeHistory ?? [],
     createdAt: row.createdAt?.toISOString() ?? new Date().toISOString(),
     updatedAt: row.updatedAt?.toISOString() ?? new Date().toISOString(),
@@ -205,7 +215,7 @@ export class PgFeatureFlagStorage implements IFeatureFlagStorage {
           createdAt: now,
           updatedAt: now,
           lastModifiedBy: flag.lastModifiedBy,
-        })
+        } as unknown as typeof featureFlags.$inferInsert)
         .returning();
 
       log.info({ key: flag.key }, "Created feature flag");
@@ -228,14 +238,20 @@ export class PgFeatureFlagStorage implements IFeatureFlagStorage {
         newValue: updates,
       };
 
+      // Strip `key` from updates so we never accidentally rename the row.
+      // Drizzle's .set() doesn't accept `undefined` as an explicit value
+      // (it would try to set the column to NULL), so we destructure and
+      // discard rather than assigning undefined.
+      const { key: _key, ...updatesWithoutKey } = updates;
+      void _key;
+
       const [row] = await db
         .update(featureFlags)
         .set({
-          ...updates,
-          key: undefined, // Can't change key
+          ...updatesWithoutKey,
           updatedAt: now,
           changeHistory: [changeEntry, ...(existing.changeHistory || []).slice(0, 49)],
-        })
+        } as Partial<typeof featureFlags.$inferInsert>)
         .where(eq(featureFlags.key, key))
         .returning();
 
@@ -364,12 +380,22 @@ export class PgFeatureFlagStorage implements IFeatureFlagStorage {
 export class PgSiteOverrideStorage implements ISiteOverrideStorage {
   async getForSite(siteId: string): Promise<SiteFeatureOverride[]> {
     return withCircuitBreaker(async () => {
-      const rows = await db.select().from(siteFeatureOverrides).where(eq(siteFeatureOverrides.siteId, siteId));
-      return rows.map(rowToSiteOverride);
+      // Per-site read — bound to the RLS session variable via scoped().
+      // The helper injects WHERE site_id = siteId, so we do not need to
+      // pass an extra predicate.
+      const rows = await scoped(siteId).select(siteFeatureOverrides);
+      return rows.map((r) => rowToSiteOverride(r as SiteFeatureOverrideRow));
     });
   }
 
   async getForFeature(featureKey: string): Promise<SiteFeatureOverride[]> {
+    // INTENTIONAL CROSS-TENANT — returns every site's override for one flag.
+    // Admin-only query used by the "who overrode this flag?" view in the
+    // feature-flag admin UI. Under migration 0004 (FORCE ROW LEVEL SECURITY)
+    // this must run as a Postgres superuser role or it will silently return
+    // zero rows. The production app role MUST NOT invoke this path; route
+    // it through a separate admin connection. Flagged for the Phase D
+    // bypass audit on 2026-04-15.
     return withCircuitBreaker(async () => {
       const rows = await db.select().from(siteFeatureOverrides).where(eq(siteFeatureOverrides.featureKey, featureKey));
       return rows.map(rowToSiteOverride);
@@ -378,62 +404,87 @@ export class PgSiteOverrideStorage implements ISiteOverrideStorage {
 
   async get(siteId: string, featureKey: string): Promise<SiteFeatureOverride | null> {
     return withCircuitBreaker(async () => {
-      const rows = await db
-        .select()
-        .from(siteFeatureOverrides)
-        .where(and(eq(siteFeatureOverrides.siteId, siteId), eq(siteFeatureOverrides.featureKey, featureKey)))
-        .limit(1);
-      return rows.length > 0 ? rowToSiteOverride(rows[0]) : null;
+      // Per-site lookup — this is the `evaluator.ts` flag-evaluation hot
+      // path (runs per request). Must be scoped under FORCE RLS or every
+      // site's overrides appear to not exist.
+      const row = await scoped(siteId).selectOne(siteFeatureOverrides, {
+        featureKey,
+      });
+      return row ? rowToSiteOverride(row as SiteFeatureOverrideRow) : null;
     });
   }
 
   async set(override: Omit<SiteFeatureOverride, "createdAt" | "updatedAt">): Promise<SiteFeatureOverride> {
-    return withCircuitBreaker(async () => {
-      const now = new Date();
+    return withCircuitBreaker(async () =>
+      // Upsert with onConflictDoUpdate is a Drizzle shape scoped() does not
+      // cover, so we drop to withDbSiteScope — the session variable is set
+      // for the transaction and the RLS policies accept the insert/update
+      // because the payload site_id matches the bound site_id.
+      withDbSiteScope(override.siteId, async (tx) => {
+        const now = new Date();
+        const txDb = tx as unknown as typeof db;
 
-      // Upsert
-      const [row] = await db
-        .insert(siteFeatureOverrides)
-        .values({
-          siteId: override.siteId,
-          featureKey: override.featureKey,
-          enabled: override.enabled,
-          reason: override.reason,
-          createdBy: override.createdBy,
-          createdAt: now,
-          updatedAt: now,
-        })
-        .onConflictDoUpdate({
-          target: [siteFeatureOverrides.siteId, siteFeatureOverrides.featureKey],
-          set: {
+        const [row] = await txDb
+          .insert(siteFeatureOverrides)
+          .values({
+            siteId: override.siteId,
+            featureKey: override.featureKey,
             enabled: override.enabled,
             reason: override.reason,
+            createdBy: override.createdBy,
+            createdAt: now,
             updatedAt: now,
-          },
-        } as any)
-        .returning();
+          })
+          .onConflictDoUpdate({
+            target: [siteFeatureOverrides.siteId, siteFeatureOverrides.featureKey],
+            set: {
+              enabled: override.enabled,
+              reason: override.reason,
+              updatedAt: now,
+            },
+          } as any)
+          .returning();
 
-      return rowToSiteOverride(row);
-    });
+        return rowToSiteOverride(row);
+      })
+    );
   }
 
   async delete(siteId: string, featureKey: string): Promise<boolean> {
-    return withCircuitBreaker(async () => {
-      const result = await db
-        .delete(siteFeatureOverrides)
-        .where(and(eq(siteFeatureOverrides.siteId, siteId), eq(siteFeatureOverrides.featureKey, featureKey)));
-      return (result.rowCount ?? 0) > 0;
-    });
+    return withCircuitBreaker(async () =>
+      // scoped().deleteWhere discards the rowCount we need to return a
+      // boolean. Drop to withDbSiteScope so the DELETE runs under the
+      // session variable and we can inspect result.rowCount directly.
+      withDbSiteScope(siteId, async (tx) => {
+        const txDb = tx as unknown as typeof db;
+        const result = await txDb
+          .delete(siteFeatureOverrides)
+          .where(and(eq(siteFeatureOverrides.siteId, siteId), eq(siteFeatureOverrides.featureKey, featureKey)));
+        return (result.rowCount ?? 0) > 0;
+      })
+    );
   }
 
   async deleteAllForSite(siteId: string): Promise<number> {
-    return withCircuitBreaker(async () => {
-      const result = await db.delete(siteFeatureOverrides).where(eq(siteFeatureOverrides.siteId, siteId));
-      return result.rowCount ?? 0;
-    });
+    return withCircuitBreaker(async () =>
+      // Same rowCount reason as delete(): withDbSiteScope escape hatch.
+      withDbSiteScope(siteId, async (tx) => {
+        const txDb = tx as unknown as typeof db;
+        const result = await txDb
+          .delete(siteFeatureOverrides)
+          .where(eq(siteFeatureOverrides.siteId, siteId));
+        return result.rowCount ?? 0;
+      })
+    );
   }
 
   async deleteAllForFeature(featureKey: string): Promise<number> {
+    // INTENTIONAL CROSS-TENANT — wipes every site's override for one flag.
+    // Reachable via FeatureFlagService.deleteFeatureFlag (index.ts:349)
+    // when an admin deletes a flag. Destructive + cross-tenant, so it
+    // MUST run as a superuser role under FORCE RLS, or admins must first
+    // enumerate affected sites and delete per-site via scoped() paths.
+    // Flagged for the Phase D bypass audit on 2026-04-15.
     return withCircuitBreaker(async () => {
       const result = await db.delete(siteFeatureOverrides).where(eq(siteFeatureOverrides.featureKey, featureKey));
       return result.rowCount ?? 0;
@@ -746,19 +797,61 @@ export class PgUsageStatsStorage implements IUsageStatsStorage {
 export class PgRolloutHistoryStorage implements IRolloutHistoryStorage {
   async record(event: Omit<RolloutEvent, "id" | "timestamp">): Promise<RolloutEvent> {
     return withCircuitBreaker(async () => {
+      const values = {
+        featureKey: event.featureKey,
+        eventType: event.eventType,
+        previousValue: event.previousValue,
+        newValue: event.newValue,
+        siteId: event.siteId,
+        userId: event.userId,
+        performedBy: event.performedBy,
+        reason: event.reason,
+        timestamp: new Date(),
+      };
+
+      if (event.siteId) {
+        // Per-site audit event — wrap in the tenant transaction so Phase B's
+        // INSERT WITH CHECK policy sees site_id matching the session var.
+        return withDbSiteScope(event.siteId, async (tx) => {
+          const txDb = tx as unknown as typeof db;
+          const [row] = await txDb
+            .insert(featureRolloutHistory)
+            .values(values)
+            .returning();
+          return rowToRolloutEvent(row);
+        });
+      }
+
+      // GLOBAL AUDIT EVENT (siteId === null|undefined).
+      //
+      // FIXME — Phase B / migration 0003 policy mismatch:
+      //   feature_rollout_history.INSERT policy uses
+      //     WITH CHECK (site_id = current_setting('app.current_site_id', true))
+      //   which REJECTS inserts where site_id is NULL. But the SELECT policy
+      //   explicitly allows NULL (site_id IS NULL OR site_id = …) and the
+      //   admin-side callers at FeatureFlagService index.ts:212 (createFlag),
+      //   692 (addDependency), 729 (removeDependency), and anywhere else
+      //   that fires a global-scope event will hit this branch with
+      //   siteId === undefined.
+      //
+      //   Under the current Phase B deploy (ENABLE, not FORCE) a superuser
+      //   role bypasses the policy and this works. Under Phase D (FORCE)
+      //   a non-superuser app role will fail the WITH CHECK and the insert
+      //   will throw. Before applying migration 0004, user must choose:
+      //     (a) write migration 0005 relaxing the INSERT WITH CHECK to
+      //         `WITH CHECK (site_id IS NULL OR site_id = current_setting(...))`
+      //         to match the SELECT policy (preserves SELECT asymmetry — tenants
+      //         still cannot forge global rows because they have session var set);
+      //     (b) route global audit writes through a superuser connection;
+      //     (c) refactor FeatureFlagService.createFlag/addDependency/removeDependency
+      //         to synthesize a sentinel siteId (breaks the global-event semantics).
+      //
+      //   Flagged 2026-04-15 during the Phase D bypass audit. Do not apply
+      //   migration 0004 until this is resolved or all non-superuser global
+      //   audit writes will raise.
       const [row] = await db
         .insert(featureRolloutHistory)
-        .values({
-          featureKey: event.featureKey,
-          eventType: event.eventType,
-          previousValue: event.previousValue,
-          newValue: event.newValue,
-          siteId: event.siteId,
-          userId: event.userId,
-          performedBy: event.performedBy,
-          reason: event.reason,
-          timestamp: new Date(),
-        })
+        .values(values)
         .returning();
 
       return rowToRolloutEvent(row);
@@ -766,6 +859,9 @@ export class PgRolloutHistoryStorage implements IRolloutHistoryStorage {
   }
 
   async getForFeature(featureKey: string, limit: number = 100): Promise<RolloutEvent[]> {
+    // INTENTIONAL CROSS-TENANT — per-flag timeline across every site.
+    // Admin-only analytics query. Under FORCE RLS must run as superuser or
+    // it will return only NULL-siteId (global) rows. Flagged 2026-04-15.
     return withCircuitBreaker(async () => {
       const rows = await db
         .select()
@@ -779,19 +875,30 @@ export class PgRolloutHistoryStorage implements IRolloutHistoryStorage {
   }
 
   async getForSite(siteId: string, limit: number = 100): Promise<RolloutEvent[]> {
-    return withCircuitBreaker(async () => {
-      const rows = await db
-        .select()
-        .from(featureRolloutHistory)
-        .where(eq(featureRolloutHistory.siteId, siteId))
-        .orderBy(desc(featureRolloutHistory.timestamp))
-        .limit(limit);
+    return withCircuitBreaker(async () =>
+      // Per-site read with orderBy + limit — scoped().select cannot express
+      // those, so we drop to withDbSiteScope. The explicit site_id WHERE
+      // clause is preserved because the caller's `siteId IS NULL` Phase B
+      // SELECT policy otherwise pulls in global-scope rows, which this
+      // method is not meant to return.
+      withDbSiteScope(siteId, async (tx) => {
+        const txDb = tx as unknown as typeof db;
+        const rows = await txDb
+          .select()
+          .from(featureRolloutHistory)
+          .where(eq(featureRolloutHistory.siteId, siteId))
+          .orderBy(desc(featureRolloutHistory.timestamp))
+          .limit(limit);
 
-      return rows.map(rowToRolloutEvent);
-    });
+        return rows.map(rowToRolloutEvent);
+      })
+    );
   }
 
   async getRecent(limit: number = 100): Promise<RolloutEvent[]> {
+    // INTENTIONAL CROSS-TENANT — global recent-activity feed for the
+    // admin dashboard. Under FORCE RLS must run as superuser or it will
+    // be limited to NULL-siteId rows. Flagged 2026-04-15.
     return withCircuitBreaker(async () => {
       const rows = await db
         .select()
@@ -831,14 +938,47 @@ export class PgRolloutHistoryStorage implements IRolloutHistoryStorage {
 
       const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
-      // Get total
+      if (query.siteId) {
+        // Per-site search — run inside withDbSiteScope so RLS allows the
+        // read under FORCE. The caller's explicit siteId equality stays
+        // in the WHERE clause so a future "siteId OR siteId IN (...)"
+        // extension does not silently widen the scope.
+        return withDbSiteScope(query.siteId, async (tx) => {
+          const txDb = tx as unknown as typeof db;
+
+          const countResult = await txDb
+            .select({ count: sql<number>`count(*)` })
+            .from(featureRolloutHistory)
+            .where(whereClause);
+          const total = Number(countResult[0]?.count ?? 0);
+
+          let queryBuilder = txDb
+            .select()
+            .from(featureRolloutHistory)
+            .where(whereClause)
+            .orderBy(desc(featureRolloutHistory.timestamp));
+
+          if (query.offset) {
+            queryBuilder = queryBuilder.offset(query.offset) as typeof queryBuilder;
+          }
+          if (query.limit) {
+            queryBuilder = queryBuilder.limit(query.limit) as typeof queryBuilder;
+          }
+
+          const rows = await queryBuilder;
+          return { events: rows.map(rowToRolloutEvent), total };
+        });
+      }
+
+      // INTENTIONAL CROSS-TENANT — no siteId filter means "search every
+      // site", the admin-wide audit search. Under FORCE RLS must run as a
+      // superuser role. Flagged 2026-04-15 during the Phase D bypass audit.
       const countResult = await db
         .select({ count: sql<number>`count(*)` })
         .from(featureRolloutHistory)
         .where(whereClause);
       const total = Number(countResult[0]?.count ?? 0);
 
-      // Get paginated results
       let queryBuilder = db
         .select()
         .from(featureRolloutHistory)

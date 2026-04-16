@@ -46,6 +46,8 @@
 
 import { EventEmitter } from "events";
 import { createModuleLogger } from "../logger";
+// AI_TIER_CONFIGS is a runtime const; the rest are pure types.
+import { AI_TIER_CONFIGS } from "@shared/cms/ai-module-types";
 import type {
   AIModuleTier,
   AIFeatureFlag,
@@ -65,11 +67,11 @@ import type {
   AICostBreakdown,
   AIFallbackConfig,
   AIFallbackBehavior,
+  AIFallbackNotification,
   AIModuleInterface,
   AIModuleRequest,
   AIModuleResponse,
   AIModuleHealthStatus,
-  AI_TIER_CONFIGS,
 } from "@shared/cms/ai-module-types";
 
 const log = createModuleLogger("ai-module-system");
@@ -485,12 +487,12 @@ export class AICostControlServiceImpl extends EventEmitter {
 
     // Check global budget
     const globalUsage = await this.getGlobalUsage();
-    if (globalUsage.costThisMonth + estimatedCost > this.config.globalMonthlyBudget) {
+    if (globalUsage.totalCostThisMonth + estimatedCost > this.config.globalMonthlyBudget) {
       return {
         allowed: this.config.onBudgetExceeded !== "block",
         reason: "Global monthly budget exceeded",
-        remainingBudget: this.config.globalMonthlyBudget - globalUsage.costThisMonth,
-        usagePercent: (globalUsage.costThisMonth / this.config.globalMonthlyBudget) * 100,
+        remainingBudget: this.config.globalMonthlyBudget - globalUsage.totalCostThisMonth,
+        usagePercent: (globalUsage.totalCostThisMonth / this.config.globalMonthlyBudget) * 100,
         throttled: this.config.onBudgetExceeded === "throttle",
         warnings: ["Global budget limit reached"],
       };
@@ -542,7 +544,7 @@ export class AICostControlServiceImpl extends EventEmitter {
     }
 
     // Check alert thresholds
-    const usagePercent = (globalUsage.costThisMonth / this.config.globalMonthlyBudget) * 100;
+    const usagePercent = (globalUsage.totalCostThisMonth / this.config.globalMonthlyBudget) * 100;
     for (const threshold of this.config.alertThresholds) {
       if (usagePercent >= threshold) {
         warnings.push(`Usage at ${usagePercent.toFixed(1)}% of budget (threshold: ${threshold}%)`);
@@ -551,7 +553,7 @@ export class AICostControlServiceImpl extends EventEmitter {
 
     return {
       allowed: true,
-      remainingBudget: this.config.globalMonthlyBudget - globalUsage.costThisMonth,
+      remainingBudget: this.config.globalMonthlyBudget - globalUsage.totalCostThisMonth,
       usagePercent,
       throttled: false,
       warnings: warnings.length > 0 ? warnings : undefined,
@@ -588,7 +590,7 @@ export class AICostControlServiceImpl extends EventEmitter {
 
     // Check and emit threshold alerts
     const globalUsage = await this.getGlobalUsage();
-    const usagePercent = (globalUsage.costThisMonth / this.config.globalMonthlyBudget) * 100;
+    const usagePercent = (globalUsage.totalCostThisMonth / this.config.globalMonthlyBudget) * 100;
 
     for (const threshold of this.config.alertThresholds) {
       if (usagePercent >= threshold) {

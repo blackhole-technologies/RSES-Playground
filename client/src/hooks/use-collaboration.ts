@@ -263,7 +263,9 @@ export function useCollaboration(documentId?: string) {
     unsubscribe,
   } = useWebSocket({
     channels: documentId ? [`doc:${documentId}`] : [],
-    autoReconnect: true,
+    // The hook option is `autoConnect`, not `autoReconnect`. Reconnection
+    // behavior is handled internally by the underlying WebSocket client.
+    autoConnect: true,
   });
 
   // Local state

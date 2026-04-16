@@ -209,7 +209,10 @@ export class ProvisioningService {
   private runningJobs: Map<string, Promise<void>> = new Map();
 
   /** Queue processing interval */
-  private queueInterval?: NodeJS.Timer;
+  // NodeJS.Timeout (not Timer) is the type returned by setInterval and
+  // accepted by clearInterval. Timer is a deprecated alias that produces
+  // overload-mismatch errors on clearInterval.
+  private queueInterval?: NodeJS.Timeout;
 
   constructor(
     networkDb: NetworkDatabase,

@@ -129,19 +129,19 @@ export class TokenEngine {
       }
     }
 
-    // Handle responsive tokens
+    // The resolver methods below return `unknown` because the actual
+    // value shape depends on the responsive/contextual/interaction
+    // dispatch; cast back to TokenValue at the assignment boundary.
     if (this.isResponsiveToken(token)) {
-      value = this.resolveResponsiveValue(token as unknown as ResponsiveToken);
+      value = this.resolveResponsiveValue(token as unknown as ResponsiveToken) as TokenValue;
     }
 
-    // Handle contextual tokens
     if (this.isContextualToken(token)) {
-      value = this.resolveContextualValue(token as unknown as ContextualToken);
+      value = this.resolveContextualValue(token as unknown as ContextualToken) as TokenValue;
     }
 
-    // Handle interaction tokens
     if (this.isInteractionToken(token)) {
-      value = this.resolveInteractionValue(token as unknown as InteractionTokenDefinition);
+      value = this.resolveInteractionValue(token as unknown as InteractionTokenDefinition) as TokenValue;
     }
 
     return {
@@ -295,16 +295,19 @@ export class TokenEngine {
       return token;
     });
 
-    // Dimension to rem
-    this.registerTransform('dimension/rem', (token, path, ctx) => {
+    // Dimension to rem.
+    // The transform mutates $value into a string for display while keeping
+    // the rest of the token shape. The TokenTransform return type is
+    // strict (TokenDefinition), so we cast at the return boundary.
+    this.registerTransform('dimension/rem', ((token, path, ctx) => {
       if (token.$type === 'dimension' && typeof token.$value === 'object') {
         const dim = token.$value as { $value: number; unit: string };
         if (dim.unit === 'px') {
-          return { ...token, $value: `${dim.$value / 16}rem` };
+          return { ...token, $value: `${dim.$value / 16}rem` } as typeof token;
         }
       }
       return token;
-    });
+    }) as TokenTransform);
 
     // Shadow to CSS
     this.registerTransform('shadow/css', (token, path, ctx) => {
@@ -314,13 +317,13 @@ export class TokenEngine {
       return token;
     });
 
-    // Typography to CSS
-    this.registerTransform('typography/css', (token, path, ctx) => {
+    // Typography to CSS — same TokenTransform return-type cast as above.
+    this.registerTransform('typography/css', ((token, path, ctx) => {
       if (token.$type === 'typography') {
-        return { ...token, $value: this.typographyToCSS(token.$value as unknown) };
+        return { ...token, $value: this.typographyToCSS(token.$value as unknown) } as unknown as typeof token;
       }
       return token;
-    });
+    }) as TokenTransform);
   }
 
   private colorToHex(color: Record<string, unknown>): string {

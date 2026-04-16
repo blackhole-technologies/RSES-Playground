@@ -1,6 +1,7 @@
 /**
  * @file file-watcher-integration.ts
  * @description Integration layer connecting the intelligent watcher with the CMS file watcher.
+ * @tier Tier 3 bridge — Forwards Tier 2 events into Tier 3, gracefully degrades. See docs/architecture/FILE-WATCHERS.md.
  * @phase Phase 10 - AI-Enhanced Infrastructure
  * @author FW (File Watcher Specialist Agent)
  * @created 2026-02-01
@@ -198,8 +199,8 @@ export class IntegratedFileWatcherService {
       this.handleHealthUpdate(health);
     });
 
-    // Forward security anomalies
-    cmsEventBus.onSecurityAnomaly((anomaly) => {
+    // Forward security anomalies. Handler is async-typed; wrap to satisfy.
+    cmsEventBus.onSecurityAnomaly(async (anomaly) => {
       recordSecurityAnomaly(anomaly.type, anomaly.severity, anomaly.blocked);
       this.eventBus.emit("security", anomaly);
     });
@@ -645,5 +646,7 @@ export function setupIntegratedWatcherWebSocket(
 
 export {
   IntegratedFileWatcherService as default,
-  IntegratedWatcherConfig,
 };
+// IntegratedWatcherConfig is already inline-exported as `export interface
+// IntegratedWatcherConfig` above. Removed from this trailing block 2026-04-14
+// to fix duplicate-export errors.

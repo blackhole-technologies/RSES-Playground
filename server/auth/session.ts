@@ -13,12 +13,29 @@
 
 import session from "express-session";
 import MemoryStore from "memorystore";
-import RedisStore from "connect-redis";
+import { RedisStore } from "connect-redis";
 import { Redis } from "ioredis";
-import type { Express } from "express";
+import type { Express, Request, RequestHandler, Response, NextFunction } from "express";
 import { authLogger as log } from "../logger";
 
 const MemoryStoreSession = MemoryStore(session);
+
+// Holds the session middleware after setupSession() so other subsystems
+// (notably the WebSocket upgrade handler) can run it on incoming requests
+// to populate req.session before deciding to accept a connection.
+let sessionMiddlewareInstance: RequestHandler | null = null;
+
+// Returns the configured express-session middleware. Throws if setupSession()
+// has not been called yet — this is intentional, the WS server must wire up
+// after session setup, not before.
+export function getSessionMiddleware(): RequestHandler {
+  if (!sessionMiddlewareInstance) {
+    throw new Error(
+      "Session middleware not initialized. Call setupSession() before getSessionMiddleware()."
+    );
+  }
+  return sessionMiddlewareInstance;
+}
 
 /**
  * Session configuration options.
@@ -108,9 +125,18 @@ function createRedisClient(url: string): Redis {
 export function createSessionMiddleware(config: SessionConfig) {
   const isProduction = process.env.NODE_ENV === "production";
 
-  // Validate secret in production
+  // Validate secret - throw in production, warn in development
   if (isProduction) {
     validateSecret(config.secret);
+  } else {
+    try {
+      validateSecret(config.secret);
+    } catch (err) {
+      log.warn(
+        (err as Error).message +
+          " — This is allowed in development but must be fixed before production."
+      );
+    }
   }
 
   // Select session store based on Redis availability
@@ -190,6 +216,11 @@ export function setupSession(app: Express, config?: Partial<SessionConfig>): voi
     ...config,
   });
 
+  // Cache the instance so getSessionMiddleware() can hand it to the WS upgrade
+  // handler. Without this, WebSocket connections cannot validate sessions
+  // against the real store and fall back to cookie-presence checks (insecure).
+  sessionMiddlewareInstance = sessionMiddleware as RequestHandler;
+
   app.use(sessionMiddleware);
 }
 
@@ -197,18 +228,19 @@ export function setupSession(app: Express, config?: Partial<SessionConfig>): voi
  * Middleware to require authentication.
  * Use this on routes that need protection.
  */
-export function requireAuth(req: any, res: any, next: any): void {
+export function requireAuth(req: Request, res: Response, next: NextFunction): void {
   if (req.isAuthenticated && req.isAuthenticated()) {
     return next();
   }
 
   // Return 401 for API routes
   if (req.path.startsWith("/api")) {
-    return res.status(401).json({
+    res.status(401).json({
       error: "Authentication required",
       message: "Please log in to access this resource",
       code: "E_AUTH_REQUIRED",
     });
+    return;
   }
 
   // Redirect to login for non-API routes
@@ -219,24 +251,27 @@ export function requireAuth(req: any, res: any, next: any): void {
  * Middleware to require admin privileges.
  * Use this on routes that need admin access.
  */
-export function requireAdmin(req: any, res: any, next: any): void {
+export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
   if (!req.isAuthenticated || !req.isAuthenticated()) {
     if (req.path.startsWith("/api")) {
-      return res.status(401).json({
+      res.status(401).json({
         error: "Authentication required",
         message: "Please log in to access this resource",
         code: "E_AUTH_REQUIRED",
       });
+      return;
     }
-    return res.redirect("/login");
+    res.redirect("/login");
+    return;
   }
 
-  if (!req.user?.isAdmin) {
-    return res.status(403).json({
+  if (!(req.user as any)?.isAdmin) {
+    res.status(403).json({
       error: "Forbidden",
       message: "Admin privileges required",
       code: "E_ADMIN_REQUIRED",
     });
+    return;
   }
 
   next();
@@ -247,7 +282,25 @@ export function requireAdmin(req: any, res: any, next: any): void {
  * but doesn't require it. Use for routes that behave differently for
  * authenticated vs anonymous users.
  */
-export function optionalAuth(req: any, res: any, next: any): void {
+export function optionalAuth(req: Request, res: Response, next: NextFunction): void {
   // User is already attached by passport if authenticated
   next();
+}
+
+/**
+ * Extract the authenticated user's ID from the request.
+ * Throws if not authenticated (use after requireAuth middleware).
+ */
+export function getUserId(req: Request): string {
+  const user = req.user as any;
+  if (!user?.id) throw new Error("User not authenticated");
+  return String(user.id);
+}
+
+/**
+ * Extract the authenticated user's display name from the request.
+ */
+export function getUserName(req: Request): string {
+  const user = req.user as any;
+  return user?.username || user?.displayName || "Unknown";
 }

@@ -1,6 +1,7 @@
 /**
  * @file file-watcher-metrics.ts
  * @description Prometheus metrics for CMS file watcher service.
+ * @tier Tier 2 telemetry — Metrics for file-watcher-cms.ts. See docs/architecture/FILE-WATCHERS.md.
  * @phase Phase 9 - CMS Content Type System
  * @author FW (File Watcher Specialist Agent)
  * @created 2026-02-01

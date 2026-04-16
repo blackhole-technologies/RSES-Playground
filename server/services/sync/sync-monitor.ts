@@ -942,15 +942,5 @@ export class SyncMonitorService extends EventEmitter {
 // =============================================================================
 // EXPORTS
 // =============================================================================
-
-export {
-  MetricsCollector,
-  HealthChecker,
-  AlertManager,
-  SyncMonitorService,
-  DashboardData,
-  SiteStatusEntry,
-  SyncSessionSummary,
-  MetricsSummary,
-  AlertRule,
-};
+// All entries are inline-exported. Trailing block removed 2026-04-14 to
+// fix duplicate-export errors.

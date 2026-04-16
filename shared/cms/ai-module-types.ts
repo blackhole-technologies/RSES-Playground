@@ -1246,14 +1246,5 @@ export const aiModuleManifestSchema = z.object({
 // =============================================================================
 // EXPORTS
 // =============================================================================
-
-export type {
-  AIModuleTier,
-  AIFeatureFlag,
-  AIProviderType,
-  AIDeploymentType,
-  AIProviderCapability,
-  AIModuleState,
-  AIFallbackType,
-  MLTaxonomyStrategy,
-};
+// All types above are inline-exported. Trailing `export type { … }` block
+// removed 2026-04-14 to fix duplicate-export errors.

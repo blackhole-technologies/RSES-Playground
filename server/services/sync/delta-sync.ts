@@ -27,7 +27,7 @@ import { EventEmitter } from "events";
 // CONSTANTS
 // =============================================================================
 
-const DEFAULT_BLOCK_SIZE = 4096; // 4KB blocks
+export const DEFAULT_BLOCK_SIZE = 4096; // 4KB blocks
 const ROLLING_WINDOW = 16; // Rolling hash window
 const MAX_DELTA_RATIO = 0.8; // If delta > 80% of original, send full file
 
@@ -752,16 +752,5 @@ export function calculateSyncRequirements(diff: ManifestDiff): {
 // =============================================================================
 // EXPORTS
 // =============================================================================
-
-export {
-  RollingChecksum,
-  generateBlockSignatures,
-  buildSignatureLookup,
-  generateDelta,
-  applyDelta,
-  generateJsonPatch,
-  applyJsonPatch,
-  diffManifests,
-  calculateSyncRequirements,
-  DEFAULT_BLOCK_SIZE,
-};
+// All entries are inline-exported. Trailing block removed 2026-04-14 to
+// fix duplicate-export errors.

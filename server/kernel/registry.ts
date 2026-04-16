@@ -77,9 +77,70 @@ const log = createModuleLogger("module-registry");
 // =============================================================================
 
 /**
- * Default timeout for module operations (ms).
+ * Default timeout for module lifecycle operations (initialize/start/stop) in ms.
+ *
+ * 30 seconds is generous for any reasonable module — most real modules
+ * complete initialize() in milliseconds, and the few that need to warm
+ * caches or open connections should finish well under this. A module that
+ * cannot complete a lifecycle operation in 30s is almost certainly hung
+ * (deadlock, infinite loop, blocked external call), and the right response
+ * is to surface it as a failure rather than block bootstrap.
  */
 const DEFAULT_OPERATION_TIMEOUT = 30000;
+
+/**
+ * Error thrown when a module lifecycle operation exceeds its timeout budget.
+ *
+ * Note that JavaScript cannot actually cancel the underlying promise —
+ * the hung module continues to run in the background. This error simply
+ * unblocks the awaiter so bootstrap can continue, marks the module as
+ * failed, and emits a registry event for monitoring.
+ */
+export class ModuleOperationTimeoutError extends Error {
+  constructor(
+    public readonly moduleId: string,
+    public readonly operation: "initialize" | "start" | "stop",
+    public readonly timeoutMs: number
+  ) {
+    super(
+      `Module "${moduleId}" ${operation}() exceeded ${timeoutMs}ms timeout. ` +
+        `The underlying operation may still be running; the registry has marked the module as failed.`
+    );
+    this.name = "ModuleOperationTimeoutError";
+  }
+}
+
+/**
+ * Race a promise against a timeout. If the timeout fires first, the returned
+ * promise rejects with ModuleOperationTimeoutError and the original promise
+ * is left to settle on its own (we cannot cancel it from outside).
+ *
+ * Implementation note: we deliberately do NOT clear the timer on success
+ * unless the promise wins the race — clearing it always would defeat the
+ * point. Instead we use Promise.race and let GC handle the loser.
+ */
+function withModuleTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  moduleId: string,
+  operationName: "initialize" | "start" | "stop"
+): Promise<T> {
+  let timeoutHandle: NodeJS.Timeout | undefined;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(() => {
+      reject(new ModuleOperationTimeoutError(moduleId, operationName, timeoutMs));
+    }, timeoutMs);
+    // Don't keep the event loop alive just for this timer — if the process
+    // is otherwise idle, we want it to exit. unref() is safe because the
+    // race will resolve via the operation promise in the normal case.
+    timeoutHandle.unref?.();
+  });
+
+  return Promise.race([operation, timeoutPromise]).finally(() => {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+  });
+}
 
 /**
  * Events emitted by the registry.
@@ -489,8 +550,15 @@ export class ModuleRegistry implements IModuleRegistry {
       const context = this.createModuleContext(entry.module, config);
       entry.context = context;
 
-      // Initialize the module
-      await entry.module.initialize(context);
+      // Initialize the module under a hard timeout. A module that hangs
+      // during initialize() must not block bootstrap — we'd rather mark
+      // it failed and continue starting the other modules.
+      await withModuleTimeout(
+        entry.module.initialize(context),
+        DEFAULT_OPERATION_TIMEOUT,
+        moduleId,
+        "initialize"
+      );
 
       this.setModuleState(moduleId, "ready");
 
@@ -526,7 +594,14 @@ export class ModuleRegistry implements IModuleRegistry {
     this.setModuleState(moduleId, "starting");
 
     try {
-      await entry.module.start();
+      // Same timeout discipline as initialize(). A hung start() must not
+      // block the rest of the module graph from coming online.
+      await withModuleTimeout(
+        entry.module.start(),
+        DEFAULT_OPERATION_TIMEOUT,
+        moduleId,
+        "start"
+      );
 
       this.setModuleState(moduleId, "running");
 
@@ -645,7 +720,15 @@ export class ModuleRegistry implements IModuleRegistry {
     this.setModuleState(moduleId, "stopping");
 
     try {
-      await entry.module.stop(timeoutMs);
+      // Enforce the timeout at the registry layer — do not trust the module
+      // to honor the timeoutMs argument it receives. A misbehaving module
+      // could ignore it entirely and hang shutdown indefinitely otherwise.
+      await withModuleTimeout(
+        entry.module.stop(timeoutMs),
+        timeoutMs,
+        moduleId,
+        "stop"
+      );
 
       this.setModuleState(moduleId, "stopped");
 

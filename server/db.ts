@@ -25,6 +25,7 @@ import {
   CircuitOpenError,
   CircuitState,
 } from "./lib/circuit-breaker";
+import { wrapDbWithDevGuard } from "./lib/dev-query-guard";
 
 const { Pool } = pg;
 
@@ -123,8 +124,24 @@ function updatePoolMetrics(): void {
 /**
  * Creates the drizzle ORM instance.
  * Includes both main schema and RBAC schema.
+ *
+ * In development only, the exported client is wrapped by the
+ * `dev-query-guard` Proxy (see server/lib/dev-query-guard.ts). The
+ * guard blocks direct `db.select/insert/update/delete` calls on
+ * multi-tenant tables registered in tenant-scoped-tables.ts, pushing
+ * developers toward `scoped(siteId)` / `withDbSiteScope(siteId, ...)`.
+ *
+ * The guard is a no-op when disabled — it returns the raw drizzle
+ * reference unchanged — so production and test environments pay zero
+ * overhead. The enabled flag is computed once at module load (rather
+ * than read on every query) so toggling NODE_ENV mid-process has no
+ * effect. Tests that need to exercise the guard import it directly
+ * from `dev-query-guard.ts` and construct their own wrapped client.
  */
-export const db = drizzle(pool, { schema: { ...schema, ...rbacSchema } });
+const rawDb = drizzle(pool, { schema: { ...schema, ...rbacSchema } });
+export const db = wrapDbWithDevGuard(rawDb, {
+  enabled: process.env.NODE_ENV === "development",
+});
 
 /**
  * Executes a database query with circuit breaker protection.

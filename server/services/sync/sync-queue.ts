@@ -789,12 +789,5 @@ export class SyncQueueConsumer extends EventEmitter {
 // =============================================================================
 // EXPORTS
 // =============================================================================
-
-export {
-  Partition,
-  SyncQueue,
-  SyncQueueConsumer,
-  QueueOptions,
-  ConsumerOptions,
-  MessageHandler,
-};
+// All entries are inline-exported. Trailing block removed 2026-04-14 to
+// fix duplicate-export errors.

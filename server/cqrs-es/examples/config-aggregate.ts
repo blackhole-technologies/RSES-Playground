@@ -548,7 +548,8 @@ export const configDeploySaga = SagaBuilder.create<ConfigWorkflowContext>()
         .build(),
     onComplete: (ctx, result) => ({
       ...ctx,
-      deployedTo: result.data?.environment,
+      // result.data is unknown by default; narrow to read environment.
+      deployedTo: (result.data as { environment?: string } | undefined)?.environment,
     }),
   })
   .addStep({

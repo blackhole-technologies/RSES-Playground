@@ -20,6 +20,7 @@ import { createModuleLogger } from "../../logger";
 import type {
   Channel,
   Message,
+  MessageBlock,
   MessageSearchFilters,
   MessageSearchResponse,
   MessageSearchResult,
@@ -535,7 +536,10 @@ export class MessagingService extends EventEmitter {
    */
   async updateMessage(
     messageId: string,
-    updates: { content?: string; blocks?: unknown[] },
+    // blocks are typed at the wire layer as unknown[] for forward
+    // compatibility but stored as MessageBlock[] internally. We narrow
+    // here so the assignment to updatedMessage.blocks compiles.
+    updates: { content?: string; blocks?: MessageBlock[] },
     updaterId: string
   ): Promise<Message> {
     const message = this.messageStore.messages.get(messageId);
@@ -958,8 +962,9 @@ export class MessagingService extends EventEmitter {
     // Sort by score descending
     results.sort((a, b) => b.score - a.score);
 
-    // Paginate
-    const pageSize = this.config.searchConfig.maxResults;
+    // Paginate. searchConfig.maxResults is optional in config; default to
+    // 50 so the response shape remains a plain `number`.
+    const pageSize = this.config.searchConfig.maxResults ?? 50;
     const paginatedResults = results.slice(0, pageSize);
 
     return {

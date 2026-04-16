@@ -4,7 +4,10 @@
  * @phase Phase 3B - Social Media Integration
  */
 
-import { getSocialMediaService, SocialMediaService } from "./social-media-service";
+// getSocialMediaService is exported from ./index.ts (the module aggregator),
+// not from the service file itself. The class itself comes from the service file.
+import { SocialMediaService } from "./social-media-service";
+import { getSocialMediaService } from "./index";
 import type {
   SocialPlatform,
   SocialPost,

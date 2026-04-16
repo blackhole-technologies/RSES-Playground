@@ -24,13 +24,21 @@ import {
   createTestContext,
 } from "./action-registry";
 import { getTriggerRegistry, TriggerEvent } from "./trigger-system";
+// Enums are used at runtime (e.g. `StepType.CONDITION`, `ExecutionStatus.RUNNING`,
+// `ErrorStrategy.RETRY`, `WorkflowStatus.ACTIVE`) so they must be value imports.
+// All other entries here are pure interfaces/aliases — keep them as type-only
+// imports so esbuild can drop them at build time.
+import {
+  StepType,
+  ExecutionStatus,
+  ErrorStrategy,
+  WorkflowStatus,
+} from "./types";
 import type {
   Workflow,
   WorkflowId,
-  WorkflowStatus,
   WorkflowStep,
   StepId,
-  StepType,
   ActionStep,
   ConditionStep,
   LoopStep,
@@ -43,12 +51,10 @@ import type {
   ErrorHandlerStep,
   WorkflowExecution,
   ExecutionId,
-  ExecutionStatus,
   StepExecutionState,
   ExecutionError,
   ConditionExpression,
   TransformExpression,
-  ErrorStrategy,
   SiteId,
   RetryConfig,
 } from "./types";
@@ -688,6 +694,13 @@ export class WorkflowEngine {
   }
 
   /**
+   * Lists all registered workflows.
+   */
+  listWorkflows(): Workflow[] {
+    return Array.from(this.workflows.values());
+  }
+
+  /**
    * Starts workflow execution from a trigger event.
    */
   async startExecution(
@@ -960,11 +973,17 @@ export class WorkflowEngine {
     } finally {
       clearTimeout(timeoutId);
 
+      // The narrowing inside this finally block sees execution.status as
+      // RUNNING | FAILED | COMPENSATING because of the try/catch above,
+      // so checks against PAUSED/WAITING_APPROVAL are flagged as
+      // unreachable. Cast to the broader ExecutionStatus type to allow
+      // the runtime check (the status can also transition asynchronously).
+      const currentStatus = execution.status as ExecutionStatus;
       if (
-        execution.status !== ExecutionStatus.PAUSED &&
-        execution.status !== ExecutionStatus.WAITING_APPROVAL
+        currentStatus !== ExecutionStatus.PAUSED &&
+        currentStatus !== ExecutionStatus.WAITING_APPROVAL
       ) {
-        if (execution.status === ExecutionStatus.RUNNING) {
+        if (currentStatus === ExecutionStatus.RUNNING) {
           execution.status = ExecutionStatus.COMPLETED;
         }
         execution.completedAt = new Date();

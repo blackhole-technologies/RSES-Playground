@@ -555,10 +555,13 @@ export class QueryBus {
 
       this.activeQueries++;
 
-      // Check cache for eventual consistency
+      // Check cache for eventual or bounded consistency. Strong-consistency
+      // queries always bypass the cache. The bounded-staleness check below
+      // only fires when consistency is "bounded".
       if (
         this.config.cacheEnabled &&
-        query.metadata.consistency === "eventual"
+        (query.metadata.consistency === "eventual" ||
+          query.metadata.consistency === "bounded")
       ) {
         const cacheKey = this.getCacheKey(query);
         const cached = await this.cache.get<TResult>(cacheKey);

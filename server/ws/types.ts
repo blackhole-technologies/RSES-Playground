@@ -46,7 +46,17 @@ export type WSMessageType =
   | "feature:override:deleted"
   | "feature:rollout:changed"
   | "feature:targeting:updated"
-  | "feature:cache:invalidated";
+  | "feature:cache:invalidated"
+  // Collaboration events (added 2026-04-14 — used by client/src/hooks/use-collaboration.ts)
+  | "presence:update"
+  | "presence:leave"
+  | "cursor:update"
+  | "comment:add"
+  | "comment:update"
+  | "comment:delete"
+  | "conflict:detected"
+  | "conflict:resolved"
+  | "version:created";
 
 /**
  * Base WebSocket message structure.

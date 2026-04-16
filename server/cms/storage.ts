@@ -81,14 +81,21 @@ export class DatabaseContentTypeStorage implements ContentTypeStorage {
   }
 
   async create(data: DbInsertContentType): Promise<DbContentType> {
-    const [result] = await db.insert(contentTypes).values(data).returning();
+    // The public DbInsertContentType is a Zod-inferred type with `string |
+    // null | undefined` for nullable columns. Drizzle's $inferInsert is
+    // narrower (`string | undefined`). The runtime accepts both; the cast
+    // here only smooths the type-level mismatch.
+    const [result] = await db
+      .insert(contentTypes)
+      .values(data as typeof contentTypes.$inferInsert)
+      .returning();
     return result;
   }
 
   async update(id: string, data: Partial<DbInsertContentType>): Promise<DbContentType | undefined> {
     const [result] = await db
       .update(contentTypes)
-      .set({ ...data, updatedAt: new Date() })
+      .set({ ...data, updatedAt: new Date() } as Partial<typeof contentTypes.$inferInsert>)
       .where(eq(contentTypes.id, id))
       .returning();
     return result;
@@ -388,14 +395,18 @@ export class DatabaseVocabularyStorage implements VocabularyStorage {
   }
 
   async create(data: DbInsertTaxonomyVocabulary): Promise<DbTaxonomyVocabulary> {
-    const [result] = await db.insert(taxonomyVocabularies).values(data).returning();
+    // Same Zod/Drizzle nullability cast as DatabaseContentTypeStorage.create.
+    const [result] = await db
+      .insert(taxonomyVocabularies)
+      .values(data as typeof taxonomyVocabularies.$inferInsert)
+      .returning();
     return result;
   }
 
   async update(id: string, data: Partial<DbInsertTaxonomyVocabulary>): Promise<DbTaxonomyVocabulary | undefined> {
     const [result] = await db
       .update(taxonomyVocabularies)
-      .set({ ...data, updatedAt: new Date() })
+      .set({ ...data, updatedAt: new Date() } as Partial<typeof taxonomyVocabularies.$inferInsert>)
       .where(eq(taxonomyVocabularies.id, id))
       .returning();
     return result;
@@ -497,7 +508,7 @@ export class DatabaseTermStorage implements TermStorage {
   async create(data: DbInsertTaxonomyTerm): Promise<DbTaxonomyTerm> {
     const [result] = await db
       .insert(taxonomyTerms)
-      .values({ ...data, uuid: uuidv4() })
+      .values({ ...data, uuid: uuidv4() } as typeof taxonomyTerms.$inferInsert)
       .returning();
     return result;
   }
@@ -505,7 +516,7 @@ export class DatabaseTermStorage implements TermStorage {
   async update(id: number, data: Partial<DbInsertTaxonomyTerm>): Promise<DbTaxonomyTerm | undefined> {
     const [result] = await db
       .update(taxonomyTerms)
-      .set({ ...data, updatedAt: new Date() })
+      .set({ ...data, updatedAt: new Date() } as Partial<typeof taxonomyTerms.$inferInsert>)
       .where(eq(taxonomyTerms.id, id))
       .returning();
     return result;
@@ -535,7 +546,7 @@ export class DatabaseTermStorage implements TermStorage {
       }
       const result = await db
         .update(taxonomyTerms)
-        .set({ ...data, updatedAt: new Date() })
+        .set({ ...data, updatedAt: new Date() } as Partial<typeof taxonomyTerms.$inferInsert>)
         .where(eq(taxonomyTerms.id, update.id));
       updated += result.rowCount ?? 0;
     }
@@ -674,7 +685,7 @@ export class DatabaseContentStorage implements ContentStorage {
   async create(data: DbInsertContent): Promise<DbContent> {
     const [result] = await db
       .insert(contents)
-      .values({ ...data, uuid: uuidv4() })
+      .values({ ...data, uuid: uuidv4() } as typeof contents.$inferInsert)
       .returning();
     return result;
   }
@@ -682,7 +693,7 @@ export class DatabaseContentStorage implements ContentStorage {
   async update(id: number, data: Partial<DbInsertContent>): Promise<DbContent | undefined> {
     const [result] = await db
       .update(contents)
-      .set({ ...data, updatedAt: new Date() })
+      .set({ ...data, updatedAt: new Date() } as Partial<typeof contents.$inferInsert>)
       .where(eq(contents.id, id))
       .returning();
     return result;
@@ -701,7 +712,7 @@ export class DatabaseContentStorage implements ContentStorage {
     if (ids.length === 0) return 0;
     const result = await db
       .update(contents)
-      .set({ ...data, updatedAt: new Date() })
+      .set({ ...data, updatedAt: new Date() } as Partial<typeof contents.$inferInsert>)
       .where(inArray(contents.id, ids));
     return result.rowCount ?? 0;
   }

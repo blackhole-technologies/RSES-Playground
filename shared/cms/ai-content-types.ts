@@ -1094,10 +1094,15 @@ export interface LearningSystemConfig {
 
 /**
  * Learned pattern
+ *
+ * `fieldName` was added 2026-04-14 — it was missing from the type but used
+ * by ai-content-service.ts at 3 call sites for field-value patterns.
+ * Optional because not every pattern type is field-scoped.
  */
 export interface LearnedPattern {
   id: string;
   type: "field_value" | "taxonomy" | "reference" | "workflow" | "formatting";
+  fieldName?: string;
   pattern: {
     context: Record<string, unknown>;
     outcome: unknown;
@@ -1313,7 +1318,9 @@ export interface AIWorkflowService {
   evaluateQualityGate(gateId: string, contentId: number): Promise<{ passed: boolean; score: number; feedback: string }>;
   performAIReview(contentId: number, config: AIReviewConfig): Promise<{ approved: boolean; feedback: string; suggestions: string[] }>;
   checkPlagiarism(content: string): Promise<{ score: number; matches: Array<{ source: string; similarity: number }> }>;
-  optimizeSEO(content: Record<string, unknown>): Promise<{ score: number; suggestions: Array<{ field: string; suggestion: string }> }>;
+  // suggestions is optional — implementations may emit a richer result
+  // (issues, keywords, readability) instead of a flat suggestions list.
+  optimizeSEO(content: Record<string, unknown>): Promise<{ score: number; suggestions?: Array<{ field: string; suggestion: string }> }>;
   checkAccessibility(content: Record<string, unknown>): Promise<{ score: number; violations: Array<{ rule: string; severity: string; fix: string }> }>;
 }
 
@@ -1431,9 +1438,5 @@ export const aiContentTypeSchema = z.object({
 // =============================================================================
 // TYPE EXPORTS
 // =============================================================================
-
-export type {
-  AIProvider,
-  AIFieldType,
-  QualityDimension,
-};
+// All types above are inline-exported. Trailing block removed 2026-04-14
+// to fix duplicate-export errors.

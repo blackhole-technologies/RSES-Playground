@@ -326,13 +326,20 @@ export class DlpService extends EventEmitter {
     } catch (error) {
       this.emit('scan_error', { scanId, error: (error as Error).message });
 
-      // Return based on default error behavior
+      // Return based on default error behavior. Map the config's
+      // 'allow|block|quarantine' to the DlpScanResult verdict union which
+      // uses 'clean|blocked|quarantined' instead.
+      const verdictMap = {
+        allow: 'clean',
+        block: 'blocked',
+        quarantine: 'quarantined',
+      } as const;
       return {
         scanId,
         messageId: context.messageId,
         scannedAt: new Date(),
         matchedPolicies: [],
-        verdict: this.config.defaultOnError,
+        verdict: verdictMap[this.config.defaultOnError],
         actionsTaken: [],
         scanDurationMs: Date.now() - startTime,
         contentModified: false,

@@ -15,7 +15,8 @@
  */
 
 import { WebSocketServer, WebSocket } from "ws";
-import type { Server } from "http";
+import type { Server, IncomingMessage, ServerResponse } from "http";
+import type { Request, Response } from "express";
 import type {
   WSMessageUnion,
   WSClientMessage,
@@ -25,16 +26,27 @@ import type {
 import { randomUUID } from "crypto";
 import { wsLogger as log } from "../logger";
 import { wsConnectionsActive, wsMessagesTotal } from "../metrics";
+import { getSessionMiddleware } from "../auth/session";
 
 const SERVER_VERSION = "1.0.0";
 const HEARTBEAT_INTERVAL = 30000; // 30 seconds
 const CLIENT_TIMEOUT = 35000; // 35 seconds (slightly more than heartbeat)
+
+// Shape of a passport-authenticated session as stored by express-session.
+// Passport persists the deserialized user reference under `passport.user`.
+interface PassportSession {
+  passport?: { user?: unknown };
+  [key: string]: unknown;
+}
 
 interface ExtendedWebSocket extends WebSocket {
   clientId: string;
   isAlive: boolean;
   subscriptions: Set<string>;
   lastActivity: number;
+  // Authenticated user attached during the upgrade handshake.
+  // Present when requireAuth is enabled and the session validated.
+  userId?: string;
 }
 
 /**
@@ -51,11 +63,49 @@ export class WSServer {
     this.requireAuth = process.env.NODE_ENV === "production" ||
                        process.env.WS_REQUIRE_AUTH === "true";
 
-    this.wss = new WebSocketServer({
-      server,
-      path,
-      // Verify client during handshake
-      verifyClient: this.requireAuth ? this.verifyClient.bind(this) : undefined,
+    // We do NOT use ws's verifyClient hook because it runs in a context where
+    // we cannot invoke express middleware (the session middleware needs a
+    // mutable response shim). Instead we attach to the HTTP server's `upgrade`
+    // event ourselves, run the real session middleware, and only then call
+    // wss.handleUpgrade. This is the canonical pattern for express-session +
+    // ws: see https://github.com/websockets/ws#client-authentication
+    this.wss = new WebSocketServer({ noServer: true });
+
+    server.on("upgrade", (req, socket, head) => {
+      // Only handle upgrades targeting this server's path. Other WS servers
+      // (e.g. the messaging server on /ws/messaging) handle their own upgrades.
+      const { url } = req;
+      if (!url || !url.startsWith(path)) {
+        return;
+      }
+
+      this.authenticateUpgrade(req)
+        .then((authResult) => {
+          if (!this.requireAuth || authResult.ok) {
+            this.wss.handleUpgrade(req, socket, head, (ws) => {
+              // Attach the authenticated user id (if any) so handleConnection
+              // can persist it on the ExtendedWebSocket.
+              (req as IncomingMessage & { _wsUserId?: string })._wsUserId =
+                authResult.userId;
+              this.wss.emit("connection", ws, req);
+            });
+          } else {
+            log.warn(
+              {
+                origin: req.headers.origin,
+                reason: authResult.reason,
+              },
+              "WebSocket upgrade rejected"
+            );
+            socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+            socket.destroy();
+          }
+        })
+        .catch((err) => {
+          log.error({ err }, "WebSocket upgrade authentication errored");
+          socket.write("HTTP/1.1 500 Internal Server Error\r\n\r\n");
+          socket.destroy();
+        });
     });
 
     this.wss.on("connection", this.handleConnection.bind(this));
@@ -68,55 +118,76 @@ export class WSServer {
   }
 
   /**
-   * Verifies client authentication during WebSocket handshake.
-   * Called before connection is established.
+   * Runs the real express-session middleware against an HTTP upgrade request,
+   * then inspects the populated session for a passport-authenticated user.
+   *
+   * Why this matters: the previous implementation only checked for the
+   * presence of a cookie named `connect.sid`/`session` and accepted ANY
+   * value. That is forgeable trivially. Running the session middleware
+   * forces the cookie to be cryptographically verified against the secret
+   * AND the underlying session id to be looked up in the store (Memory or
+   * Redis), so we know the session is real and current.
    */
-  private verifyClient(
-    info: { origin: string; req: any; secure: boolean },
-    callback: (result: boolean, code?: number, message?: string) => void
-  ): void {
-    const req = info.req;
-
-    // Check for session cookie
-    const cookies = this.parseCookies(req.headers.cookie || "");
-    const sessionId = cookies["connect.sid"] || cookies["session"];
-
-    if (!sessionId) {
-      log.warn({ origin: info.origin }, "WebSocket connection rejected: no session");
-      callback(false, 401, "Authentication required");
-      return;
-    }
-
-    // In production, validate session against session store
-    // For now, accept any session cookie (session validation happens at message level)
-    // TODO: Add proper session validation with session store lookup
-    log.debug({ origin: info.origin }, "WebSocket client verified");
-    callback(true);
-  }
-
-  /**
-   * Parses cookie header into key-value pairs.
-   */
-  private parseCookies(cookieHeader: string): Record<string, string> {
-    const cookies: Record<string, string> = {};
-    cookieHeader.split(";").forEach((cookie) => {
-      const [name, ...rest] = cookie.split("=");
-      if (name) {
-        cookies[name.trim()] = rest.join("=").trim();
+  private authenticateUpgrade(
+    req: IncomingMessage
+  ): Promise<{ ok: boolean; userId?: string; reason?: string }> {
+    return new Promise((resolve) => {
+      let sessionMw;
+      try {
+        sessionMw = getSessionMiddleware();
+      } catch {
+        // setupSession() has not run — fail closed. We must never accept WS
+        // upgrades before the session subsystem is initialized.
+        resolve({ ok: false, reason: "session-not-initialized" });
+        return;
       }
+
+      // express-session expects (req, res, next). We construct a minimal
+      // response shim: it never sends data, but session middleware writes
+      // Set-Cookie headers via res.setHeader which we discard since the
+      // upgrade response is handled by ws.handleUpgrade.
+      const resShim = {
+        setHeader: () => undefined,
+        getHeader: () => undefined,
+        on: () => undefined,
+        emit: () => undefined,
+        once: () => undefined,
+        end: () => undefined,
+      } as unknown as ServerResponse;
+
+      sessionMw(req as Request, resShim as Response, () => {
+        const session = (req as IncomingMessage & { session?: PassportSession })
+          .session;
+        const passportUser = session?.passport?.user;
+
+        if (passportUser === undefined || passportUser === null) {
+          resolve({ ok: false, reason: "no-authenticated-user" });
+          return;
+        }
+
+        // passport.user is whatever serializeUser stored — for this codebase
+        // it's the user id (number or string). Coerce to string for logging.
+        const userId =
+          typeof passportUser === "object"
+            ? String((passportUser as { id?: unknown }).id ?? passportUser)
+            : String(passportUser);
+
+        resolve({ ok: true, userId });
+      });
     });
-    return cookies;
   }
 
   /**
    * Handles new client connections.
    */
-  private handleConnection(ws: WebSocket): void {
+  private handleConnection(ws: WebSocket, req?: IncomingMessage): void {
     const extWs = ws as ExtendedWebSocket;
     extWs.clientId = randomUUID();
     extWs.isAlive = true;
     extWs.subscriptions = new Set(["default"]);
     extWs.lastActivity = Date.now();
+    extWs.userId = (req as IncomingMessage & { _wsUserId?: string } | undefined)
+      ?._wsUserId;
 
     this.clients.set(extWs.clientId, extWs);
 

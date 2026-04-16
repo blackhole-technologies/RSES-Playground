@@ -385,7 +385,8 @@ export class PersonalAssistant extends EventEmitter {
       intent: parsed?.primaryIntent?.name,
       action: parsed?.primaryIntent?.action,
       requiresFollowUp: parsed?.primaryIntent
-        ? this.actionParser?.getMissingSlots(parsed.primaryIntent).length > 0
+        // actionParser is optional; default to "no follow-up" if absent.
+        ? (this.actionParser?.getMissingSlots(parsed.primaryIntent).length ?? 0) > 0
         : false,
     };
   }

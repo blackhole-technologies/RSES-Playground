@@ -10,6 +10,9 @@
  * @standards AWS Security Best Practices, NIST IR 8011
  */
 
+// Re-export the config so security/index.ts can import from this module.
+export type { SelfHealingConfig } from './types';
+
 import type {
   SelfHealingConfig,
   ResponsePolicy,
@@ -394,7 +397,9 @@ export class SelfHealingSecurityManager {
       this.recordAction({
         type: 'rate_limit_adjustment',
         timestamp: new Date(),
-        details: adjustment,
+        // RateLimitAdjustment isn't structurally Record<string, unknown>;
+        // cast through unknown for the audit details bag.
+        details: adjustment as unknown as Record<string, unknown>,
       });
 
       return adjustment;

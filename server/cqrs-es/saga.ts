@@ -21,9 +21,10 @@
 
 import { randomUUID } from "crypto";
 import { EventEmitter } from "events";
+// SagaState is an enum used at runtime; the rest are pure types.
+import { SagaState } from "./types";
 import type {
   SagaInstance,
-  SagaState,
   SagaStep,
   SagaStepResult,
   Command,
@@ -299,8 +300,10 @@ export class SagaOrchestrator {
       // Create and execute command
       const command = step.createCommand(instance.context);
 
-      // Add saga ID to command metadata
-      (command.metadata as Record<string, unknown>).sagaId = instance.id;
+      // Add saga ID to command metadata. CommandMetadata isn't structurally
+      // identical to Record<string, unknown> at the type level, so cast
+      // through unknown to avoid the conversion-may-be-mistake warning.
+      (command.metadata as unknown as Record<string, unknown>).sagaId = instance.id;
 
       const commandResult = await commandBus.send(command);
 
@@ -384,9 +387,11 @@ export class SagaOrchestrator {
             stepResult.commandResult
           );
 
-          // Mark as compensation command
+          // Mark as compensation command. Same `as unknown` cast as the
+          // forward-step path above to bridge CommandMetadata into a
+          // bag for ad-hoc fields.
           compensationCommand.metadata.isCompensation = true;
-          (compensationCommand.metadata as Record<string, unknown>).sagaId = instance.id;
+          (compensationCommand.metadata as unknown as Record<string, unknown>).sagaId = instance.id;
 
           const result = await execution.commandBus.send(compensationCommand);
 

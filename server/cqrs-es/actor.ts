@@ -22,11 +22,12 @@
 
 import { randomUUID } from "crypto";
 import { EventEmitter } from "events";
+// SupervisionStrategy is an enum used at runtime; the rest are pure types.
+import { SupervisionStrategy } from "./types";
 import type {
   ActorRef,
   ActorMessage,
   ActorState,
-  SupervisionStrategy,
 } from "./types";
 import { createModuleLogger } from "../logger";
 
@@ -334,9 +335,15 @@ class ActorInstance<TState = unknown, TMessage = unknown> {
         "Actor message handling failed"
       );
 
-      // Handle supervision
+      // Handle supervision. The parent's handleChildFailure expects
+      // ActorInstance<unknown, unknown>; this instance has narrower
+      // generics. Cast to the wider supertype since the parent only
+      // reads the child's ref/strategy and never inspects the state.
       if (this.parent) {
-        this.parent.handleChildFailure(this, error as Error);
+        this.parent.handleChildFailure(
+          this as ActorInstance<unknown, unknown>,
+          error as Error
+        );
       }
     }
   }
@@ -371,7 +378,11 @@ class ActorInstance<TState = unknown, TMessage = unknown> {
         break;
       case SupervisionStrategy.ESCALATE:
         if (this.parent) {
-          this.parent.handleChildFailure(this, error);
+          // Same generic-variance cast as in handleMessage above.
+          this.parent.handleChildFailure(
+            this as ActorInstance<unknown, unknown>,
+            error
+          );
         }
         break;
     }

@@ -1,6 +1,7 @@
 /**
  * @file file-watcher-intelligent.ts
  * @description AI-powered intelligent file watching system with self-healing capabilities.
+ * @tier Tier 3 experimental — Layered on Tier 2. Predictive layer is heuristic, not ML. See docs/architecture/FILE-WATCHERS.md.
  * @phase Phase 10 - AI-Enhanced Infrastructure
  * @author FW (File Watcher Specialist Agent)
  * @validated SYS (Systems Analyst Agent)

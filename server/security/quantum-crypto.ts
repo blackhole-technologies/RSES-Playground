@@ -22,6 +22,11 @@ import type {
   AlgorithmTransition,
 } from './types';
 
+// Re-export the config type so security/index.ts can import it from here
+// without reaching into ./types directly. Keeps the security module's
+// public surface coherent.
+export type { QuantumSafeCryptoConfig } from './types';
+
 // =============================================================================
 // CRYPTO CONFIGURATION
 // =============================================================================
@@ -553,7 +558,11 @@ export class QuantumCryptoManager {
    */
   private combineSecrets(secret1: Buffer, secret2: Buffer): Buffer {
     const combined = Buffer.concat([secret1, secret2]);
-    return crypto.hkdfSync('sha256', combined, Buffer.alloc(0), 'hybrid-key', 32);
+    // crypto.hkdfSync returns ArrayBuffer in newer Node typings;
+    // wrap in Buffer.from to satisfy the Buffer return type.
+    return Buffer.from(
+      crypto.hkdfSync('sha256', combined, Buffer.alloc(0), 'hybrid-key', 32)
+    );
   }
 
   /**

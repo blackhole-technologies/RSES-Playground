@@ -135,6 +135,13 @@ export interface SiteStatus {
 export type SyncDirection = "push" | "pull" | "bidirectional";
 
 /**
+ * Generic field value used by the conflict resolver and field mergers.
+ * Added 2026-04-14 — the conflict-resolver references this name but it
+ * was missing from the types module.
+ */
+export type FieldValue = unknown;
+
+/**
  * Sync mode
  */
 export type SyncMode =

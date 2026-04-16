@@ -742,7 +742,7 @@ export const loggingMiddleware: CommandMiddleware = async (command, context, nex
 export const transactionMiddleware: CommandMiddleware = async (command, context, next) => {
   // Add transaction ID to command metadata for event correlation
   const transactionId = randomUUID();
-  (command.metadata as Record<string, unknown>).transactionId = transactionId;
+  (command.metadata as unknown as Record<string, unknown>).transactionId = transactionId;
 
   return next();
 };

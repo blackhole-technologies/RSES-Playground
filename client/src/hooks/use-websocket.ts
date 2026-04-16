@@ -12,6 +12,10 @@ import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from "
 
 /**
  * WebSocket message types from server.
+ *
+ * Kept in sync with `server/ws/types.ts` `WSMessageType`. When you add a
+ * new type on the server side, mirror it here so the client hook can
+ * subscribe to it without a type error.
  */
 export type WSMessageType =
   | "connection"
@@ -38,7 +42,28 @@ export type WSMessageType =
   | "kernel:module:health"
   | "kernel:system:ready"
   | "kernel:system:shutdown"
-  | "kernel:system:health";
+  | "kernel:system:health"
+  // Feature flag events
+  | "feature:created"
+  | "feature:updated"
+  | "feature:deleted"
+  | "feature:enabled"
+  | "feature:disabled"
+  | "feature:override:set"
+  | "feature:override:deleted"
+  | "feature:rollout:changed"
+  | "feature:targeting:updated"
+  | "feature:cache:invalidated"
+  // Collaboration events (added 2026-04-14 — used by use-collaboration.ts)
+  | "presence:update"
+  | "presence:leave"
+  | "cursor:update"
+  | "comment:add"
+  | "comment:update"
+  | "comment:delete"
+  | "conflict:detected"
+  | "conflict:resolved"
+  | "version:created";
 
 /**
  * Generic WebSocket message.

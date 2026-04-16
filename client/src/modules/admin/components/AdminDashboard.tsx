@@ -288,7 +288,7 @@ export function AdminDashboard() {
               onViewHistory={(key) => console.log("History:", key)}
               onBulkEnable={handleBulkEnable}
               onBulkDisable={handleBulkDisable}
-              onBulkDelete={(keys) => console.log("Bulk delete:", keys)}
+              onBulkDelete={async (keys) => { console.log("Bulk delete:", keys); }}
             />
           </TabsContent>
 

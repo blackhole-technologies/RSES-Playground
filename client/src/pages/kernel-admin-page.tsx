@@ -96,11 +96,11 @@ import { cn } from "@/lib/utils";
 
 function KernelNotAvailable() {
   return (
-    <div className="flex items-center justify-center h-[60vh]">
+    <div className="flex items-center justify-center h-[60vh]" role="alert" aria-label="Kernel unavailable">
       <Card className="w-[400px]">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <PowerOff className="h-5 w-5 text-muted-foreground" />
+            <PowerOff className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
             Kernel Not Available
           </CardTitle>
         </CardHeader>
@@ -132,7 +132,7 @@ function HealthOverview() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Activity className="h-5 w-5" />
+            <Activity className="h-5 w-5" aria-hidden="true" />
             System Health
           </CardTitle>
         </CardHeader>
@@ -147,8 +147,8 @@ function HealthOverview() {
     return (
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-red-500">
-            <XCircle className="h-5 w-5" />
+          <CardTitle className="flex items-center gap-2 text-red-500" role="alert">
+            <XCircle className="h-5 w-5" aria-hidden="true" />
             Health Check Failed
           </CardTitle>
         </CardHeader>
@@ -160,9 +160,9 @@ function HealthOverview() {
   }
 
   const healthIcon = {
-    healthy: <CheckCircle2 className="h-6 w-6 text-green-500" />,
-    degraded: <AlertTriangle className="h-6 w-6 text-yellow-500" />,
-    unhealthy: <XCircle className="h-6 w-6 text-red-500" />,
+    healthy: <CheckCircle2 className="h-6 w-6 text-green-500" aria-hidden="true" />,
+    degraded: <AlertTriangle className="h-6 w-6 text-yellow-500" aria-hidden="true" />,
+    unhealthy: <XCircle className="h-6 w-6 text-red-500" aria-hidden="true" />,
   };
 
   const moduleCount = Object.keys(health.modules).length;
@@ -174,12 +174,12 @@ function HealthOverview() {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <Activity className="h-5 w-5" />
+          <Activity className="h-5 w-5" aria-hidden="true" />
           System Health
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-4" role="status" aria-live="polite" aria-label="System health status">
           {healthIcon[health.status]}
           <div>
             <p className="text-lg font-semibold capitalize">{health.status}</p>
@@ -188,7 +188,7 @@ function HealthOverview() {
             </p>
           </div>
           <div className="ml-auto text-sm text-muted-foreground">
-            <Clock className="h-4 w-4 inline mr-1" />
+            <Clock className="h-4 w-4 inline mr-1" aria-hidden="true" />
             {new Date(health.timestamp).toLocaleTimeString()}
           </div>
         </div>
@@ -219,14 +219,14 @@ function ModuleCard({
 
   return (
     <Card
-      className="cursor-pointer hover:border-primary/50 transition-colors"
+      className="cursor-pointer hover:border-primary/50 transition-colors" role="button" aria-label={`View details for ${module.name} module, status: ${module.state}`}
       onClick={() => onSelect(module.id)}
     >
       <CardContent className="p-4">
         <div className="flex items-start justify-between">
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-1">
-              <Box className="h-4 w-4 text-muted-foreground" />
+              <Box className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
               <span className="font-medium">{module.name}</span>
               <Badge variant="outline" className={cn("text-xs", tierColor)}>
                 {module.tier}
@@ -235,7 +235,7 @@ function ModuleCard({
             <p className="text-sm text-muted-foreground mb-2">
               v{module.version}
             </p>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2" role="status" aria-live="polite" aria-label="WebSocket connection status">
               <span className={cn("text-sm capitalize", stateColor)}>
                 {module.state}
               </span>
@@ -251,9 +251,9 @@ function ModuleCard({
               )}
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2" role="status" aria-live="polite" aria-label="WebSocket connection status">
             <Switch
-              checked={module.enabled && module.state === "running"}
+              checked={module.enabled && module.state === "running"} aria-label={`Toggle ${module.name} module`}
               disabled={isToggling || module.tier === "kernel"}
               onClick={(e) => {
                 e.stopPropagation();
@@ -262,7 +262,7 @@ function ModuleCard({
                 onToggle(module.id, checked);
               }}
             />
-            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+            <ChevronRight className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
           </div>
         </div>
       </CardContent>
@@ -373,11 +373,11 @@ function ModuleList({ tier, onSelect }: ModuleListProps) {
   if (error) {
     return (
       <Card>
-        <CardContent className="p-6 text-center">
-          <XCircle className="h-8 w-8 text-red-500 mx-auto mb-2" />
+        <CardContent className="p-6 text-center" role="alert">
+          <XCircle className="h-8 w-8 text-red-500 mx-auto mb-2" aria-hidden="true" />
           <p className="text-muted-foreground">Failed to load modules</p>
-          <Button variant="outline" className="mt-4" onClick={() => refetch()}>
-            <RefreshCw className="h-4 w-4 mr-2" />
+          <Button variant="outline" className="mt-4" onClick={() => refetch()} aria-label="Retry loading modules">
+            <RefreshCw className="h-4 w-4 mr-2" aria-hidden="true" />
             Retry
           </Button>
         </CardContent>
@@ -507,7 +507,7 @@ function ModuleConfigEditor({ moduleId }: ModuleConfigEditorProps) {
 
   if (error) {
     return (
-      <div className="text-sm text-muted-foreground">
+      <div className="text-sm text-muted-foreground" role="alert">
         Failed to load configuration
       </div>
     );
@@ -523,12 +523,12 @@ function ModuleConfigEditor({ moduleId }: ModuleConfigEditorProps) {
   if (!hasSchema || schema.length === 0) {
     return (
       <div className="space-y-4">
-        <div className="text-sm text-muted-foreground">
+        <div className="text-sm text-muted-foreground" role="alert">
           This module does not define a configuration schema. You can edit the
           raw configuration below.
         </div>
         <textarea
-          className="w-full h-32 font-mono text-xs p-2 border rounded bg-muted"
+          className="w-full h-32 font-mono text-xs p-2 border rounded bg-muted" aria-label="Raw JSON configuration editor"
           value={JSON.stringify(formValues, null, 2)}
           onChange={(e) => {
             try {
@@ -554,9 +554,9 @@ function ModuleConfigEditor({ moduleId }: ModuleConfigEditorProps) {
             disabled={!isDirty || updateConfig.isPending}
           >
             {updateConfig.isPending ? (
-              <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
+              <RefreshCw className="h-4 w-4 mr-1 animate-spin" aria-hidden="true" />
             ) : (
-              <Save className="h-4 w-4 mr-1" />
+              <Save className="h-4 w-4 mr-1" aria-hidden="true" />
             )}
             Save
           </Button>
@@ -597,9 +597,9 @@ function ModuleConfigEditor({ moduleId }: ModuleConfigEditorProps) {
           disabled={!isDirty || updateConfig.isPending}
         >
           {updateConfig.isPending ? (
-            <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
+            <RefreshCw className="h-4 w-4 mr-1 animate-spin" aria-hidden="true" />
           ) : (
-            <Save className="h-4 w-4 mr-1" />
+            <Save className="h-4 w-4 mr-1" aria-hidden="true" />
           )}
           Save
         </Button>
@@ -619,7 +619,7 @@ function renderConfigField(
   switch (field.type) {
     case "boolean":
       return (
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2" role="status" aria-live="polite" aria-label="WebSocket connection status">
           <Switch
             id={field.name}
             checked={Boolean(value ?? field.default)}
@@ -675,7 +675,7 @@ function ModuleDetailSheet({ moduleId, onClose }: ModuleDetailSheetProps) {
       <SheetContent className="w-[400px] sm:w-[540px]">
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2">
-            <Box className="h-5 w-5" />
+            <Box className="h-5 w-5" aria-hidden="true" />
             {isLoading ? "Loading..." : module?.name || "Module Details"}
           </SheetTitle>
           <SheetDescription>
@@ -805,7 +805,7 @@ function ModuleDetailSheet({ moduleId, onClose }: ModuleDetailSheetProps) {
               {/* Configuration */}
               <div>
                 <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
-                  <Settings className="h-4 w-4" />
+                  <Settings className="h-4 w-4" aria-hidden="true" />
                   Configuration
                 </h4>
                 <ModuleConfigEditor moduleId={module.id} />
@@ -906,7 +906,7 @@ function DependencyGraph({ onSelect }: { onSelect: (id: string) => void }) {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-[300px]">
-        <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
+        <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" aria-hidden="true" />
       </div>
     );
   }
@@ -922,7 +922,7 @@ function DependencyGraph({ onSelect }: { onSelect: (id: string) => void }) {
   if (!graphData) {
     return (
       <div className="flex items-center justify-center h-[300px]">
-        <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
+        <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" aria-hidden="true" />
         <span className="ml-2 text-muted-foreground">Building graph...</span>
       </div>
     );
@@ -951,7 +951,7 @@ function DependencyGraph({ onSelect }: { onSelect: (id: string) => void }) {
   return (
     <div className="relative">
       <svg
-        viewBox="0 0 400 300"
+        viewBox="0 0 400 300" role="img" aria-label="Module dependency graph visualization"
         className="w-full h-[300px] bg-muted/20 rounded-lg"
       >
         <defs>
@@ -1080,27 +1080,27 @@ function DependencyGraph({ onSelect }: { onSelect: (id: string) => void }) {
  */
 function getEventIcon(type: string) {
   if (type.includes("started") || type.includes("enabled")) {
-    return <Power className="h-4 w-4 text-green-500" />;
+    return <Power className="h-4 w-4 text-green-500" aria-hidden="true" />;
   }
   if (type.includes("stopped") || type.includes("disabled")) {
-    return <PowerOff className="h-4 w-4 text-yellow-500" />;
+    return <PowerOff className="h-4 w-4 text-yellow-500" aria-hidden="true" />;
   }
   if (type.includes("failed")) {
-    return <XCircle className="h-4 w-4 text-red-500" />;
+    return <XCircle className="h-4 w-4 text-red-500" aria-hidden="true" />;
   }
   if (type.includes("health")) {
-    return <Activity className="h-4 w-4 text-blue-500" />;
+    return <Activity className="h-4 w-4 text-blue-500" aria-hidden="true" />;
   }
   if (type.includes("registered") || type.includes("loaded")) {
-    return <Box className="h-4 w-4 text-purple-500" />;
+    return <Box className="h-4 w-4 text-purple-500" aria-hidden="true" />;
   }
   if (type.includes("system:ready")) {
-    return <CheckCircle2 className="h-4 w-4 text-green-500" />;
+    return <CheckCircle2 className="h-4 w-4 text-green-500" aria-hidden="true" />;
   }
   if (type.includes("system:shutdown")) {
-    return <AlertTriangle className="h-4 w-4 text-orange-500" />;
+    return <AlertTriangle className="h-4 w-4 text-orange-500" aria-hidden="true" />;
   }
-  return <Zap className="h-4 w-4 text-muted-foreground" />;
+  return <Zap className="h-4 w-4 text-muted-foreground" aria-hidden="true" />;
 }
 
 /**
@@ -1146,18 +1146,18 @@ function LiveEventLog() {
     <div className="space-y-4">
       {/* Connection status bar */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2" role="status" aria-live="polite" aria-label="WebSocket connection status">
           {isConnected ? (
             <>
-              <Radio className="h-4 w-4 text-green-500 animate-pulse" />
+              <Radio className="h-4 w-4 text-green-500 animate-pulse" aria-hidden="true" />
               <span className="text-sm text-green-600">Live</span>
-              <Wifi className="h-4 w-4 text-green-500" />
+              <Wifi className="h-4 w-4 text-green-500" aria-hidden="true" />
             </>
           ) : (
             <>
-              <Radio className="h-4 w-4 text-muted-foreground" />
+              <Radio className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
               <span className="text-sm text-muted-foreground">Disconnected</span>
-              <WifiOff className="h-4 w-4 text-muted-foreground" />
+              <WifiOff className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
             </>
           )}
           <span className="text-xs text-muted-foreground ml-2">
@@ -1171,7 +1171,7 @@ function LiveEventLog() {
             onClick={() => clearEvents()}
             disabled={events.length === 0}
           >
-            <Trash2 className="h-4 w-4 mr-1" />
+            <Trash2 className="h-4 w-4 mr-1" aria-hidden="true" />
             Clear
           </Button>
           <Button
@@ -1194,14 +1194,14 @@ function LiveEventLog() {
         </div>
       ) : allEvents.length === 0 ? (
         <div className="text-center text-muted-foreground p-6">
-          <Radio className="h-8 w-8 mx-auto mb-2 opacity-50" />
+          <Radio className="h-8 w-8 mx-auto mb-2 opacity-50" aria-hidden="true" />
           <p>Waiting for kernel events...</p>
           <p className="text-xs mt-1">
             Events will appear here in real-time when modules change state.
           </p>
         </div>
       ) : (
-        <ScrollArea className="h-[400px]" ref={scrollRef}>
+        <ScrollArea className="h-[400px]" ref={scrollRef} aria-label="Live kernel events">
           <div className="space-y-2 pr-4">
             {allEvents.map((event, index) => (
               <div
@@ -1309,7 +1309,7 @@ function EventLog() {
   }
 
   return (
-    <ScrollArea className="h-[400px]">
+    <ScrollArea className="h-[400px]" aria-label="Kernel event history">
       <div className="space-y-2 pr-4">
         {events.map((event, index) => (
           <div
@@ -1318,7 +1318,7 @@ function EventLog() {
           >
             <Zap className="h-4 w-4 text-muted-foreground mt-0.5" />
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2" role="status" aria-live="polite" aria-label="WebSocket connection status">
                 <span className="font-mono text-sm">{event.type}</span>
                 {event.source && (
                   <Badge variant="outline" className="text-xs">
@@ -1432,7 +1432,7 @@ function ModuleInstaller() {
         <div className="flex-1 space-y-4">
           <div className="space-y-2">
             <Label htmlFor="module-id" className="flex items-center gap-2">
-              <Package className="h-4 w-4" />
+              <Package className="h-4 w-4" aria-hidden="true" />
               Module ID
             </Label>
             <Input
@@ -1449,7 +1449,7 @@ function ModuleInstaller() {
 
           <div className="space-y-2">
             <Label htmlFor="module-code" className="flex items-center gap-2">
-              <FileCode className="h-4 w-4" />
+              <FileCode className="h-4 w-4" aria-hidden="true" />
               Module Code (TypeScript)
             </Label>
             <Textarea
@@ -1462,8 +1462,8 @@ function ModuleInstaller() {
           </div>
 
           {error && (
-            <div className="flex items-center gap-2 text-red-500 text-sm">
-              <XCircle className="h-4 w-4" />
+            <div className="flex items-center gap-2 text-red-500 text-sm" role="alert">
+              <XCircle className="h-4 w-4" aria-hidden="true" />
               {error}
             </div>
           )}
@@ -1476,7 +1476,7 @@ function ModuleInstaller() {
             {installModule.isPending ? (
               <RefreshCw className="h-4 w-4 animate-spin" />
             ) : (
-              <Upload className="h-4 w-4" />
+              <Upload className="h-4 w-4" aria-hidden="true" />
             )}
             Install Module
           </Button>
@@ -1485,7 +1485,7 @@ function ModuleInstaller() {
         <Card className="w-[300px]">
           <CardHeader>
             <CardTitle className="text-sm flex items-center gap-2">
-              <Database className="h-4 w-4" />
+              <Database className="h-4 w-4" aria-hidden="true" />
               Installation Notes
             </CardTitle>
           </CardHeader>
@@ -1525,7 +1525,7 @@ export default function KernelAdminPage() {
   if (checkingAvailability) {
     return (
       <div className="container mx-auto p-6">
-        <div className="flex items-center justify-center h-[60vh]">
+        <div className="flex items-center justify-center h-[60vh]" role="alert" aria-label="Kernel unavailable">
           <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
       </div>

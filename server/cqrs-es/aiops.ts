@@ -31,6 +31,11 @@ import type {
 } from "./types";
 import { getMetricsCollector, getAlertManager, AlertSeverity } from "./observability";
 import { createModuleLogger } from "../logger";
+import {
+  InfrastructureAdapterFactory,
+  RemediationExecutor,
+  type IInfrastructureAdapter,
+} from "./infrastructure-adapters";
 
 const log = createModuleLogger("aiops");
 
@@ -382,6 +387,26 @@ export class AutoRemediator {
   private pendingTriggers: Map<string, Date> = new Map();
   private executionHistory: RemediationAction[] = [];
   private emitter: EventEmitter = new EventEmitter();
+  private executor: RemediationExecutor | null = null;
+  private adapter: IInfrastructureAdapter | null = null;
+
+  /**
+   * Initialize with infrastructure adapter
+   */
+  async initialize(): Promise<void> {
+    this.adapter = await InfrastructureAdapterFactory.getAdapter();
+    this.executor = new RemediationExecutor(this.adapter);
+
+    this.executor.on("success", (action, result) => {
+      log.info({ actionId: action.id, message: result?.message }, "Remediation succeeded");
+    });
+
+    this.executor.on("failure", (action, result) => {
+      log.error({ actionId: action.id, message: result?.message }, "Remediation failed");
+    });
+
+    log.info({ adapterType: this.adapter.type }, "AutoRemediator initialized with adapter");
+  }
 
   /**
    * Registers a remediation rule.
@@ -437,7 +462,14 @@ export class AutoRemediator {
    * Executes a remediation action.
    */
   private executeRemediation(rule: RemediationRule): RemediationAction {
-    const action = { ...rule.action, id: randomUUID(), status: "executing" as const };
+    // Status is widened to RemediationAction["status"] so the .then/.catch
+    // below can transition it to "completed" or "failed". Without this
+    // widening TypeScript locks the literal at "executing".
+    const action: RemediationAction = {
+      ...rule.action,
+      id: randomUUID(),
+      status: "executing",
+    };
 
     log.info(
       {
@@ -479,10 +511,19 @@ export class AutoRemediator {
    * Performs the remediation action.
    */
   private async performAction(action: RemediationAction): Promise<void> {
+    // Use real executor if available, otherwise fallback to simulation
+    if (this.executor) {
+      const result = await this.executor.execute(action);
+      if (!result.success) {
+        throw new Error(result.message);
+      }
+      return;
+    }
+
+    // Fallback simulation for backwards compatibility
     switch (action.type) {
       case "restart":
         log.info({ target: action.target }, "Simulating restart");
-        // In production: await restartService(action.target);
         break;
 
       case "scale":
@@ -490,12 +531,10 @@ export class AutoRemediator {
           { target: action.target, replicas: action.params.replicas },
           "Simulating scale"
         );
-        // In production: await scaleService(action.target, action.params.replicas);
         break;
 
       case "failover":
         log.info({ target: action.target }, "Simulating failover");
-        // In production: await triggerFailover(action.target);
         break;
 
       case "throttle":
@@ -503,12 +542,10 @@ export class AutoRemediator {
           { target: action.target, rate: action.params.rate },
           "Simulating throttle"
         );
-        // In production: await applyThrottle(action.target, action.params.rate);
         break;
 
       case "circuit-break":
         log.info({ target: action.target }, "Simulating circuit break");
-        // In production: await openCircuitBreaker(action.target);
         break;
 
       default:
@@ -885,6 +922,7 @@ export class AIOpsEngine {
 
   private running: boolean = false;
   private checkInterval?: NodeJS.Timeout;
+  private initialized: boolean = false;
 
   constructor() {
     this.anomalyDetector = new AnomalyDetector();
@@ -899,6 +937,17 @@ export class AIOpsEngine {
         this.autoRemediator.evaluate(anomaly.metric, anomaly.value);
       }
     });
+  }
+
+  /**
+   * Initialize AIOps engine with infrastructure adapter
+   */
+  async initialize(): Promise<void> {
+    if (this.initialized) return;
+
+    await this.autoRemediator.initialize();
+    this.initialized = true;
+    log.info("AIOps engine initialized with infrastructure adapter");
   }
 
   /**

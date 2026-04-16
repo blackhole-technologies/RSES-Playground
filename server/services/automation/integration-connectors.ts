@@ -19,10 +19,11 @@ import { createCipheriv, createDecipheriv, randomBytes, scrypt } from "crypto";
 import { promisify } from "util";
 import { z } from "zod";
 import { RateLimiter } from "./trigger-system";
+// ConnectorAuthType is an enum used at runtime; the rest are pure types.
+import { ConnectorAuthType } from "./types";
 import type {
   IntegrationConnector,
   ConnectorId,
-  ConnectorAuthType,
   ConnectorAction,
   ConnectorTrigger,
   Connection,
@@ -293,6 +294,17 @@ export class ConnectorRegistry {
   }
 
   /**
+   * Lists connectors as summary objects.
+   */
+  listConnectors(): Array<{ id: string; name: string; type: ConnectorAuthType }> {
+    return Array.from(this.connectors.values()).map((c) => ({
+      id: c.id,
+      name: c.name,
+      type: c.authType,
+    }));
+  }
+
+  /**
    * Gets connectors by category.
    */
   getConnectorsByCategory(category: string): IntegrationConnector[] {
@@ -430,9 +442,10 @@ export class ConnectorRegistry {
         }
         break;
 
-      case ConnectorAuthType.OAUTH2:
-        // Check token validity
-        const tokens = credentials as OAuth2Tokens;
+      case ConnectorAuthType.OAUTH2: {
+        // Check token validity. Cast through unknown because OAuth2Tokens
+        // and the generic credentials Record don't structurally overlap.
+        const tokens = credentials as unknown as OAuth2Tokens;
         if (tokens.expiresAt && new Date(tokens.expiresAt) < new Date()) {
           // Try to refresh
           if (tokens.refreshToken) {
@@ -440,13 +453,18 @@ export class ConnectorRegistry {
               connection.connectorId,
               tokens.refreshToken
             );
-            connection.credentials = await this.credentialManager.encrypt(newTokens);
+            // encrypt() takes Record<string, unknown>; OAuth2Tokens is
+            // structurally a credential bag.
+            connection.credentials = await this.credentialManager.encrypt(
+              newTokens as unknown as Record<string, unknown>
+            );
             connection.refreshedAt = new Date();
           } else {
             throw new Error("Token expired and no refresh token available");
           }
         }
         break;
+      }
 
       case ConnectorAuthType.BASIC:
         if (!credentials.username || !credentials.password) {

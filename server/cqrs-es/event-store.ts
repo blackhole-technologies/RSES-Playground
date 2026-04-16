@@ -349,6 +349,10 @@ export class InMemoryEventStore implements IEventStore {
     const subscriptionId = randomUUID();
     let requested = 0;
     let cancelled = false;
+    // Capture the event emitter in the closure so the cancel callback
+    // can clean up listeners. Inside an object-literal method, `this`
+    // refers to the literal itself, not the surrounding class instance.
+    const eventEmitter = this.eventEmitter;
 
     const subscription: Subscription = {
       id: subscriptionId,
@@ -357,7 +361,7 @@ export class InMemoryEventStore implements IEventStore {
       },
       cancel() {
         cancelled = true;
-        this.eventEmitter.removeAllListeners(`stream:${aggregateId}`);
+        eventEmitter.removeAllListeners(`stream:${aggregateId}`);
         log.debug({ subscriptionId, aggregateId }, "Stream subscription cancelled");
       },
     };
@@ -408,6 +412,9 @@ export class InMemoryEventStore implements IEventStore {
     const subscriptionId = randomUUID();
     let requested = 0;
     let cancelled = false;
+    // See note in subscribeToStream: closure-capture the event emitter
+    // because `this` inside an object-literal method refers to the literal.
+    const eventEmitter = this.eventEmitter;
 
     const subscription: Subscription = {
       id: subscriptionId,
@@ -416,7 +423,7 @@ export class InMemoryEventStore implements IEventStore {
       },
       cancel() {
         cancelled = true;
-        this.eventEmitter.removeAllListeners("event");
+        eventEmitter.removeAllListeners("event");
         log.debug({ subscriptionId }, "Global subscription cancelled");
       },
     };

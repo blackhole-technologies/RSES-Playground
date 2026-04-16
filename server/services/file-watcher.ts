@@ -1,6 +1,7 @@
 /**
  * @file file-watcher.ts
  * @description File system watcher service using chokidar.
+ * @tier Tier 1 — Editor project tracking. See docs/architecture/FILE-WATCHERS.md.
  * @phase Phase 3 - File System Integration
  * @author FW (File Watcher Specialist Agent)
  * @validated SYS (Systems Analyst Agent)

@@ -264,7 +264,9 @@ export class MediaModuleRegistryImpl implements MediaModuleRegistry {
           type: 'module:enabled',
           id: moduleId,
           timestamp: new Date(),
-          data: result,
+          // ModuleInitResult isn't structurally Record<string, unknown>;
+          // cast through unknown to fit the event payload bag.
+          data: result as unknown as Record<string, unknown>,
         });
 
         console.log(`[MediaRegistry] Module enabled: ${moduleId}`);

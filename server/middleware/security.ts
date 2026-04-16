@@ -117,11 +117,13 @@ export function createHelmetMiddleware() {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://cdn.jsdelivr.net"], // Required for React dev + Monaco
-        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-        imgSrc: ["'self'", "data:", "blob:"],
-        fontSrc: ["'self'", "https://fonts.gstatic.com"],
-        connectSrc: ["'self'", "ws:", "wss:", "https://cdn.jsdelivr.net"], // WebSocket + Monaco CDN
+        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://cdn.jsdelivr.net", "blob:"], // React dev + Monaco
+        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://cdn.jsdelivr.net"], // Monaco CSS
+        imgSrc: ["'self'", "data:", "blob:", "https:"],
+        fontSrc: ["'self'", "https://fonts.gstatic.com", "https://cdn.jsdelivr.net", "data:"],
+        connectSrc: ["'self'", "ws:", "wss:", "https://cdn.jsdelivr.net", "https://esm.sh"], // WebSocket + Monaco CDN
+        workerSrc: ["'self'", "blob:"], // Monaco web workers
+        childSrc: ["'self'", "blob:"], // Monaco iframe workers
         frameSrc: ["'none'"],
         objectSrc: ["'none'"],
         baseUri: ["'self'"],
@@ -164,6 +166,10 @@ export function createRateLimiter(config: Partial<SecurityConfig> = {}) {
     },
     standardHeaders: true,
     legacyHeaders: false,
+    // Don't count failed requests (4xx/5xx) against the rate limit.
+    // Prevents attackers from exhausting a user's quota with invalid requests
+    // and avoids penalizing users for validation errors.
+    skipFailedRequests: true,
     skip: (req) => rateLimitExemptPaths.some((p) => req.path.startsWith(p)),
     // Use default keyGenerator which handles IPv6 properly
     // Trust proxy headers for X-Forwarded-For
@@ -295,21 +301,43 @@ export function csrfProtection(config: Partial<SecurityConfig> = {}) {
 }
 
 /**
- * Generates a CSRF token and sets it as a cookie.
- * Should be called on initial page load.
+ * Generates a CSRF token and sets it as an httpOnly cookie.
+ * The token is also attached to res.locals for the initial page response
+ * to deliver to the frontend (e.g., in a meta tag or JSON endpoint).
+ *
+ * The frontend stores the token in memory and sends it via X-CSRF-Token header.
+ * The cookie is httpOnly so XSS cannot steal the token from the cookie itself.
  */
 export function generateCsrfToken() {
   return (req: Request, res: Response, next: NextFunction) => {
     if (!req.cookies?.csrf) {
       const token = generateSecureToken(32);
       res.cookie("csrf", token, {
-        httpOnly: false, // Must be readable by JavaScript
+        httpOnly: true, // Protected from XSS - token delivered via response body instead
         secure: process.env.NODE_ENV === "production",
         sameSite: "strict",
         maxAge: 24 * 60 * 60 * 1000, // 24 hours
       });
+      // Make token available for initial page response delivery
+      res.locals.csrfToken = token;
+    } else {
+      res.locals.csrfToken = req.cookies.csrf;
     }
     next();
+  };
+}
+
+/**
+ * Endpoint handler to fetch the current CSRF token.
+ * Frontend calls this once at startup to get the token for X-CSRF-Token headers.
+ */
+export function csrfTokenEndpoint() {
+  return (req: Request, res: Response) => {
+    const token = res.locals.csrfToken || req.cookies?.csrf;
+    if (!token) {
+      return res.status(500).json({ error: "CSRF token not available" });
+    }
+    res.json({ csrfToken: token });
   };
 }
 

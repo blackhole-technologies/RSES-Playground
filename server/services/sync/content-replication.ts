@@ -262,7 +262,12 @@ export interface ContentReplicatorEvents {
  * Content replicator - handles replication between sites
  */
 export class ContentReplicator extends EventEmitter {
-  private options: Required<ReplicationOptions>;
+  // Required<> minus the genuinely optional fields. Required<ReplicationOptions>
+  // would force every field including taxonomyFilter to be non-undefined,
+  // which doesn't match how it's actually populated.
+  private options: Omit<Required<ReplicationOptions>, "taxonomyFilter"> & {
+    taxonomyFilter?: ReplicationOptions["taxonomyFilter"];
+  };
   private state: ReplicationState;
   private session: SyncSession | null;
   private changeLog: ChangeLog;
@@ -872,11 +877,5 @@ export class ReplicationManager {
 // =============================================================================
 // EXPORTS
 // =============================================================================
-
-export {
-  ChangeLog,
-  ContentReplicator,
-  ReplicationManager,
-  ReplicationState,
-  ReplicationOptions,
-};
+// All entries are inline-exported. Trailing block removed 2026-04-14 to
+// fix duplicate-export errors.

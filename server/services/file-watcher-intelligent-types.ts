@@ -1,6 +1,7 @@
 /**
  * @file file-watcher-intelligent-types.ts
  * @description Type definitions for intelligent file watching system integration.
+ * @tier Tier 3 types — WS message and API types for file-watcher-intelligent.ts. See docs/architecture/FILE-WATCHERS.md.
  * @phase Phase 10 - AI-Enhanced Infrastructure
  * @author FW (File Watcher Specialist Agent)
  * @created 2026-02-01

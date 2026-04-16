@@ -365,3 +365,10 @@ export interface TestMatchResponse {
   types: string[];
   filetypes: string[];
 }
+
+// Aliases re-exporting under the names expected by server/modules/engine/index.ts.
+// The original names (RsesParser.parse return shape and TestMatchResponse)
+// predate the engine module's API contract; aliasing here keeps both names
+// pointing at the same shape without renaming the production-code identifiers.
+export type ParseResult = ReturnType<typeof RsesParser.parse>;
+export type TestResult = TestMatchResponse;

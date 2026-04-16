@@ -874,7 +874,10 @@ export class TaxonomyEngine extends EventEmitter {
    * Resolves classification conflicts based on strategy.
    */
   private resolveConflict(values: string[]): string[] {
-    switch (this.config.conflictResolution) {
+    // Cast to the full ConflictResolutionStrategy union so the
+    // "most_specific" branch (which is excluded from the config-level
+    // type but valid as an internal strategy) can be reached.
+    switch (this.config.conflictResolution as ConflictResolutionStrategy) {
       case "first_match":
         return values.slice(0, 1);
       case "all_matches":

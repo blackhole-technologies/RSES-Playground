@@ -28,20 +28,27 @@ export default function FeatureFlagsAdminPage() {
 
   return (
     <div className="min-h-screen bg-background">
+      {/* Skip link for keyboard accessibility */}
+      <a
+        href="#ff-main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:px-4 focus:py-2 focus:bg-primary focus:text-primary-foreground focus:rounded"
+      >
+        Skip to main content
+      </a>
       {/* Header */}
-      <header className="border-b sticky top-0 bg-background/95 backdrop-blur z-10">
+      <header className="border-b sticky top-0 bg-background/95 backdrop-blur z-10" role="banner">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <Link href="/">
-                <Button variant="ghost" size="sm">
-                  <ArrowLeft className="h-4 w-4 mr-2" />
+                <Button variant="ghost" size="sm" aria-label="Back to home">
+                  <ArrowLeft className="h-4 w-4 mr-2" aria-hidden="true" />
                   Back
                 </Button>
               </Link>
               <div>
                 <h1 className="text-xl font-bold flex items-center gap-2">
-                  <Flag className="h-5 w-5" />
+                  <Flag className="h-5 w-5" aria-hidden="true" />
                   Feature Flags
                 </h1>
                 <p className="text-sm text-muted-foreground">
@@ -54,24 +61,24 @@ export default function FeatureFlagsAdminPage() {
       </header>
 
       {/* Main Content */}
-      <main className="container mx-auto px-4 py-6">
+      <main id="ff-main-content" className="container mx-auto px-4 py-6" role="main" aria-label="Feature Flags Administration">
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="mb-6">
+          <TabsList className="mb-6" role="navigation" aria-label="Feature flags sections">
             <TabsTrigger value="dashboard" className="gap-2">
-              <LayoutDashboard className="h-4 w-4" />
+              <LayoutDashboard className="h-4 w-4" aria-hidden="true" />
               Dashboard
             </TabsTrigger>
             <TabsTrigger value="dependencies" className="gap-2">
-              <GitBranch className="h-4 w-4" />
+              <GitBranch className="h-4 w-4" aria-hidden="true" />
               Dependencies
             </TabsTrigger>
             <TabsTrigger value="history" className="gap-2">
-              <History className="h-4 w-4" />
+              <History className="h-4 w-4" aria-hidden="true" />
               History
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="dashboard" className="space-y-6">
+          <TabsContent value="dashboard" className="space-y-6" role="region" aria-label="Dashboard overview">
             {/* Stats and Recent Changes Row */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <FeatureFlagStatsWidget />
@@ -82,11 +89,11 @@ export default function FeatureFlagsAdminPage() {
             <DependencyGraphWidget />
           </TabsContent>
 
-          <TabsContent value="dependencies">
+          <TabsContent value="dependencies" role="region" aria-label="Flag dependencies">
             <DependencyGraphWidget />
           </TabsContent>
 
-          <TabsContent value="history">
+          <TabsContent value="history" role="region" aria-label="Recent changes history">
             <RecentChangesWidget />
           </TabsContent>
         </Tabs>

@@ -28,6 +28,7 @@ import type {
   TranscriptionSegment,
   SpeakerInfo,
 } from "@shared/messaging/types";
+import { getMeetingIntelligenceService, type MeetingIntelligence } from "./meeting-intelligence";
 
 const log = createModuleLogger("meeting-service");
 
@@ -798,7 +799,14 @@ export class MeetingService extends EventEmitter {
 
     activeMeeting.liveTranscription.push(fullSegment);
 
-    this.emit("meeting:transcription_update", { meetingId, segment: fullSegment });
+    // Analyze segment with intelligence service for real-time insights
+    const intelligenceService = getMeetingIntelligenceService();
+    intelligenceService.processSegment(meetingId, fullSegment);
+
+    // Get latest insights and emit with transcription update
+    const insights = intelligenceService.getIntelligence(meetingId);
+
+    this.emit("meeting:transcription_update", { meetingId, segment: fullSegment, insights });
 
     return fullSegment;
   }
@@ -939,7 +947,11 @@ export class MeetingService extends EventEmitter {
   }
 
   /**
-   * Generate AI summary for a meeting
+   * Generate AI summary for a meeting.
+   *
+   * Currently a heuristic implementation. The path to a real LLM-backed
+   * summary is documented in `docs/ROADMAP-LATEST.md` Milestone 2 and is
+   * deliberately deferred until the project is ready to incur API costs.
    */
   private async generateAISummary(
     meeting: Meeting,
@@ -1035,6 +1047,14 @@ export class MeetingService extends EventEmitter {
     }
 
     return actionItems.slice(0, 10);  // Limit to 10 items
+  }
+
+  /**
+   * Get real-time meeting insights
+   */
+  async getInsights(meetingId: string): Promise<MeetingIntelligence | null> {
+    const intelligenceService = getMeetingIntelligenceService();
+    return intelligenceService.getIntelligence(meetingId);
   }
 
   /**

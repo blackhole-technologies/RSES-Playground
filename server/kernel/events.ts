@@ -274,7 +274,11 @@ export class EventBus implements IEventBus {
       subscribedAt: new Date(),
     };
 
-    handlers.add(registration);
+    // Type assertion: handlers is a Set<HandlerRegistration<unknown>>, but
+    // we have a HandlerRegistration<T>. The mismatch is purely about the
+    // payload type parameter, which is structurally compatible because the
+    // wrapper function below accepts unknown and casts at the boundary.
+    handlers.add(registration as unknown as HandlerRegistration<unknown>);
 
     // Create wrapper that handles the registration
     const wrappedHandler = async (payload: EventPayload<T>) => {
@@ -294,7 +298,7 @@ export class EventBus implements IEventBus {
 
       // Handle "once" subscriptions
       if (registration.options.once) {
-        handlers.delete(registration);
+        handlers.delete(registration as unknown as HandlerRegistration<unknown>);
         this.emitter.off(eventType, wrappedHandler);
       }
     };
@@ -315,7 +319,7 @@ export class EventBus implements IEventBus {
       eventType,
       subscribedAt: registration.subscribedAt,
       unsubscribe: () => {
-        handlers.delete(registration);
+        handlers.delete(registration as unknown as HandlerRegistration<unknown>);
         this.emitter.off(eventType, (registration as any)._wrappedHandler);
         log.debug({ eventType }, "Event handler unsubscribed");
       },

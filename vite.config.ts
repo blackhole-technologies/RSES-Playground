@@ -12,7 +12,8 @@ const useHttps = fs.existsSync(certPath) && fs.existsSync(keyPath);
 export default defineConfig({
   plugins: [
     react(),
-    runtimeErrorOverlay(),
+    // runtimeErrorOverlay disabled - causes HMR client load issues
+    // runtimeErrorOverlay(),
     ...(process.env.NODE_ENV !== "production" &&
     process.env.REPL_ID !== undefined
       ? [

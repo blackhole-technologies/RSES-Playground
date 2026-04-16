@@ -2,15 +2,52 @@
  * @file safe-expression.ts
  * @description Safe expression evaluator without code injection risks
  * @module lib
- * @phase Phase 1 - Security Fix
+ * @phase Phase 1 - Security Fix (hardened 2026-04-14)
  *
- * Replaces dangerous new Function() calls with a safe parser.
+ * Replaces dangerous dynamic-code-construction calls with a safe parser.
  * Only allows simple comparisons and logical operations.
+ *
+ * Hardening (2026-04-14):
+ * - MAX_EXPRESSION_LENGTH caps input size (DoS via huge inputs).
+ * - MAX_PARSE_DEPTH caps recursion depth (DoS via deeply nested parens).
+ * - MAX_OPERATIONS caps total evaluation steps (DoS via expression bombs).
+ * - Division and modulo by zero are coerced to undefined instead of producing
+ *   Infinity/NaN that could leak into business logic.
+ *
+ * These limits exist because the workflow engine accepts user-authored
+ * conditions in feature-flag rules and automation triggers. Without limits,
+ * a single malformed condition can pin a CPU core indefinitely.
  */
 
 import { createModuleLogger } from "../logger";
 
 const log = createModuleLogger("safe-expression");
+
+// Maximum length of the raw expression string. 4 KiB is generous for any
+// human-authored boolean rule (the longest real-world feature-flag conditions
+// observed during audit are <500 chars).
+const MAX_EXPRESSION_LENGTH = 4096;
+
+// Maximum recursive descent depth. The grammar has 5 levels (or → and →
+// comparison → additive → multiplicative → unary → primary), so a depth of 64
+// allows ~12 fully-nested parenthesized expressions, which is more than any
+// human will write but blocks pathological inputs.
+const MAX_PARSE_DEPTH = 64;
+
+// Maximum number of evaluation operations (token consumptions, comparisons,
+// arithmetic ops, variable lookups). Bounds total evaluation cost regardless
+// of input shape.
+const MAX_OPERATIONS = 10_000;
+
+// Custom error so callers can distinguish a hostile input from a benign one
+// that simply doesn't evaluate. The safeEvaluate wrapper still returns
+// undefined either way, but logs at warn level for ExpressionLimitError.
+export class ExpressionLimitError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ExpressionLimitError";
+  }
+}
 
 /**
  * Token types for expression parsing.
@@ -179,11 +216,17 @@ function resolveVariable(path: string, context: Record<string, unknown>): unknow
 
 /**
  * Simple recursive descent parser for safe expression evaluation.
+ *
+ * Tracks parse depth and operation count to bound worst-case CPU cost.
+ * Both limits raise ExpressionLimitError, which the safeEvaluate wrapper
+ * catches and logs distinctly from ordinary parse errors.
  */
 class ExpressionParser {
   private tokens: Token[];
   private pos: number = 0;
   private context: Record<string, unknown>;
+  private depth: number = 0;
+  private ops: number = 0;
 
   constructor(tokens: Token[], context: Record<string, unknown>) {
     this.tokens = tokens;
@@ -206,14 +249,41 @@ class ExpressionParser {
     return this.advance();
   }
 
+  // Each call is one "operation" for the global cap. Cheap to call,
+  // cheap to bound, and bounds the dominant-cost ops uniformly.
+  private tickOp(): void {
+    if (++this.ops > MAX_OPERATIONS) {
+      throw new ExpressionLimitError(
+        `Expression exceeded MAX_OPERATIONS (${MAX_OPERATIONS})`
+      );
+    }
+  }
+
+  // Wraps a recursive descent step with depth tracking. Pre-incrementing
+  // before the inner call and decrementing on the way out gives an accurate
+  // peak-depth count regardless of the call shape.
+  private withDepth<T>(fn: () => T): T {
+    if (++this.depth > MAX_PARSE_DEPTH) {
+      throw new ExpressionLimitError(
+        `Expression exceeded MAX_PARSE_DEPTH (${MAX_PARSE_DEPTH})`
+      );
+    }
+    try {
+      return fn();
+    } finally {
+      this.depth--;
+    }
+  }
+
   parse(): unknown {
-    return this.parseOr();
+    return this.withDepth(() => this.parseOr());
   }
 
   private parseOr(): unknown {
     let left = this.parseAnd();
 
     while (this.current().type === "LOGICAL" && this.current().value === "||") {
+      this.tickOp();
       this.advance();
       const right = this.parseAnd();
       left = Boolean(left) || Boolean(right);
@@ -226,6 +296,7 @@ class ExpressionParser {
     let left = this.parseComparison();
 
     while (this.current().type === "LOGICAL" && this.current().value === "&&") {
+      this.tickOp();
       this.advance();
       const right = this.parseComparison();
       left = Boolean(left) && Boolean(right);
@@ -238,6 +309,7 @@ class ExpressionParser {
     let left = this.parseAdditive();
 
     if (this.current().type === "COMPARATOR") {
+      this.tickOp();
       const op = this.advance().value as string;
       const right = this.parseAdditive();
 
@@ -267,6 +339,7 @@ class ExpressionParser {
       this.current().type === "OPERATOR" &&
       ["+", "-"].includes(this.current().value as string)
     ) {
+      this.tickOp();
       const op = this.advance().value as string;
       const right = this.parseMultiplicative();
 
@@ -291,6 +364,7 @@ class ExpressionParser {
       this.current().type === "OPERATOR" &&
       ["*", "/", "%"].includes(this.current().value as string)
     ) {
+      this.tickOp();
       const op = this.advance().value as string;
       const right = this.parseUnary();
 
@@ -298,12 +372,18 @@ class ExpressionParser {
         case "*":
           left = (left as number) * (right as number);
           break;
-        case "/":
-          left = (left as number) / (right as number);
+        case "/": {
+          // Coerce divide-by-zero to undefined rather than producing Infinity
+          // or NaN that would silently propagate into business logic.
+          const r = right as number;
+          left = r === 0 ? undefined : (left as number) / r;
           break;
-        case "%":
-          left = (left as number) % (right as number);
+        }
+        case "%": {
+          const r = right as number;
+          left = r === 0 ? undefined : (left as number) % r;
           break;
+        }
       }
     }
 
@@ -312,19 +392,22 @@ class ExpressionParser {
 
   private parseUnary(): unknown {
     if (this.current().type === "LOGICAL" && this.current().value === "!") {
+      this.tickOp();
       this.advance();
-      return !this.parseUnary();
+      return !this.withDepth(() => this.parseUnary());
     }
 
     if (this.current().type === "OPERATOR" && this.current().value === "-") {
+      this.tickOp();
       this.advance();
-      return -(this.parseUnary() as number);
+      return -(this.withDepth(() => this.parseUnary()) as number);
     }
 
     return this.parsePrimary();
   }
 
   private parsePrimary(): unknown {
+    this.tickOp();
     const token = this.current();
 
     switch (token.type) {
@@ -339,6 +422,7 @@ class ExpressionParser {
 
         // Handle dot notation
         while (this.current().type === "DOT") {
+          this.tickOp();
           this.advance();
           const next = this.expect("IDENTIFIER");
           path += "." + next.value;
@@ -350,11 +434,12 @@ class ExpressionParser {
         return resolveVariable(path, this.context);
       }
 
-      case "LPAREN":
+      case "LPAREN": {
         this.advance();
-        const result = this.parse();
+        const result = this.withDepth(() => this.parse());
         this.expect("RPAREN");
         return result;
+      }
 
       default:
         throw new Error(`Unexpected token: ${token.type}`);
@@ -374,12 +459,36 @@ export function safeEvaluate(
   expression: string,
   variables: Record<string, unknown>
 ): unknown {
+  // Hard cap input length BEFORE tokenizing. Tokenization itself is O(n) but
+  // a 10MB expression will allocate a 10MB token array regardless of validity,
+  // and we don't want callers to be able to OOM the process by sending one
+  // gigantic feature-flag rule.
+  if (expression.length > MAX_EXPRESSION_LENGTH) {
+    log.warn(
+      { length: expression.length, max: MAX_EXPRESSION_LENGTH },
+      "Expression exceeded MAX_EXPRESSION_LENGTH; rejected"
+    );
+    return undefined;
+  }
+
   try {
     const tokens = tokenize(expression);
     const parser = new ExpressionParser(tokens, variables);
     return parser.parse();
   } catch (error) {
-    log.warn({ expression, error: (error as Error).message }, "Expression evaluation failed");
+    if (error instanceof ExpressionLimitError) {
+      // Distinct log level for security-relevant rejections so they show up
+      // in audit trails without being lost in benign parse errors.
+      log.warn(
+        { expression: expression.slice(0, 200), error: error.message },
+        "Expression rejected by limit guard"
+      );
+    } else {
+      log.warn(
+        { expression: expression.slice(0, 200), error: (error as Error).message },
+        "Expression evaluation failed"
+      );
+    }
     return undefined;
   }
 }

@@ -764,7 +764,9 @@ export class TaskAutomationService extends EventEmitter implements ITaskService 
 
   async createTask(
     userId: string,
-    task: Omit<Task, "id" | "createdAt" | "updatedAt">
+    // userId is passed as the first arg and assigned below; omit it from
+    // the task payload so callers don't have to repeat it.
+    task: Omit<Task, "id" | "userId" | "createdAt" | "updatedAt">
   ): Promise<Task> {
     // Check limits
     const userTaskSet = this.userTasks.get(userId) || new Set();
@@ -1040,7 +1042,9 @@ export class TaskAutomationService extends EventEmitter implements ITaskService 
 
   async createWorkflow(
     userId: string,
-    workflow: Omit<Workflow, "id" | "createdAt" | "updatedAt">
+    // userId is the first arg; omit it from the payload type to match how
+    // callers (including createSuggestedWorkflow) build the object.
+    workflow: Omit<Workflow, "id" | "userId" | "executionCount" | "createdAt" | "updatedAt">
   ): Promise<Workflow> {
     const userWorkflowSet = this.userWorkflows.get(userId) || new Set();
     if (userWorkflowSet.size >= this.config.maxWorkflowsPerUser) {

@@ -1,6 +1,7 @@
 /**
  * @file file-watcher-cms.ts
  * @description Advanced file watching system for RSES CMS transformation.
+ * @tier Tier 2 core — CMS production watcher. See docs/architecture/FILE-WATCHERS.md.
  * @phase Phase 9 - CMS Content Type System
  * @author FW (File Watcher Specialist Agent)
  * @validated SEC (Security Specialist Agent)
@@ -26,8 +27,12 @@
  * - symlink: Symlink state synchronization
  */
 
-import chokidar, { FSWatcher, WatchOptions } from "chokidar";
+import chokidar, { FSWatcher } from "chokidar";
+// chokidar v5 no longer exports WatchOptions as a named type; the options
+// are passed inline. Redefine a local minimal shape for our code paths.
+type WatchOptions = Parameters<typeof chokidar.watch>[1];
 import path from "path";
+import { Stats } from "node:fs";
 import fs from "fs/promises";
 import { EventEmitter } from "events";
 import { randomUUID } from "crypto";
@@ -916,7 +921,11 @@ export class SymlinkManager {
     this.isHealing = true;
 
     while (this.healingQueue.size > 0) {
+      // values().next().value can be `undefined` if the set is empty by the
+      // time we read it (race with concurrent processors). The size check
+      // above prevents this in practice, but we narrow the type explicitly.
       const linkPath = this.healingQueue.values().next().value;
+      if (linkPath === undefined) break;
       this.healingQueue.delete(linkPath);
 
       // Healing would be called here with appropriate search paths
@@ -1427,7 +1436,9 @@ export class CMSFileWatcherService {
     type: FileEventType,
     filePath: string,
     dirConfig: WatchDirectoryConfig,
-    stats?: fs.Stats
+    // fs/promises does not re-export Stats; import it from node:fs (the
+    // shape is identical to the one returned by fs.promises.stat).
+    stats?: Stats
   ): Promise<void> {
     // Security validation
     const validation = this.securityMonitor.validatePath(filePath);
@@ -1840,7 +1851,9 @@ export function setupFileWatcherWebSocket(
 ): void {
   const eventBus = watcher.getEventBus();
 
-  eventBus.onFileEvent((event) => {
+  // The event bus handler types are async (Promise<void>); wrap each
+  // sync broadcast in an async function so the assignment is type-safe.
+  eventBus.onFileEvent(async (event) => {
     const message: WSFileEventMessage = {
       type: "file:event",
       timestamp: Date.now(),
@@ -1849,7 +1862,7 @@ export function setupFileWatcherWebSocket(
     broadcast(message, "files");
   });
 
-  eventBus.onBatchEvent((batch) => {
+  eventBus.onBatchEvent(async (batch) => {
     const message: WSFileBatchMessage = {
       type: "file:batch",
       timestamp: Date.now(),
@@ -1867,7 +1880,7 @@ export function setupFileWatcherWebSocket(
     broadcast(message, "admin");
   });
 
-  eventBus.onSecurityAnomaly((anomaly) => {
+  eventBus.onSecurityAnomaly(async (anomaly) => {
     const message: WSSecurityAnomalyMessage = {
       type: "watcher:security",
       timestamp: Date.now(),

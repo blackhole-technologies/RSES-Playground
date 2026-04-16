@@ -1,0 +1,159 @@
+-- Add api_keys auth-lookup bypass policy (validateKey resolution — option B)
+-- Migration: 0007_add_api_keys_lookup_bypass_policy
+-- Milestone: M1.8a follow-up (ROADMAP_2026-04-15_v7.md, STATUS_2026-04-15_v10)
+-- Depends on: 0006_add_api_keys_rls_policies
+--
+-- ============================================================================
+-- MANUAL APPLY ONLY — review, test, then apply AFTER 0006
+-- ============================================================================
+--
+-- This migration adds a second PERMISSIVE SELECT policy to `api_keys`
+-- that allows rows to be read when a dedicated
+-- `app.api_key_lookup` session variable is set to 'true'. It does
+-- NOT modify the four strict-equality policies from 0006 —
+-- INSERT, UPDATE, and DELETE on api_keys remain strictly bound to
+-- `site_id = current_setting('app.current_site_id', true)`.
+--
+-- # Why this migration exists
+--
+-- The SDK auth flow (`api-key-service.validateKey`) arrives at the
+-- server with an opaque API key and no site context. The owning
+-- site is learned only AFTER the hash lookup, so the SELECT cannot
+-- be bound to a specific `app.current_site_id`. Migration 0006
+-- documented three options for resolving this:
+--
+--   (a) Superuser connection for validateKey — simplest, widens
+--       superuser blast radius.
+--   (b) Dedicated `app.api_key_lookup` session variable — this
+--       migration. Chosen 2026-04-15 (STATUS v10).
+--   (c) Encode site in the key itself — rejected, changes wire
+--       protocol and requires key-rotation migration.
+--
+-- Option (b) keeps validateKey on the main DB client and survives a
+-- future FORCE flip on api_keys (migration 0008 or similar).
+--
+-- # How the bypass works
+--
+-- PostgreSQL applies multiple PERMISSIVE policies for the same
+-- command with OR semantics. So adding a second SELECT policy that
+-- checks for the bypass flag means: a row is visible if EITHER the
+-- strict-equality policy matches OR the bypass policy matches. The
+-- strict policy from 0006 is unchanged:
+--
+--     CREATE POLICY "api_keys_isolation_select" ON "api_keys"
+--       FOR SELECT
+--       USING (site_id = current_setting('app.current_site_id', true));
+--
+-- And this migration adds:
+--
+--     CREATE POLICY "api_keys_auth_lookup" ON "api_keys"
+--       FOR SELECT
+--       USING (current_setting('app.api_key_lookup', true) = 'true');
+--
+-- Net effect on SELECT visibility:
+--
+--   | session var state                                 | visibility |
+--   |---|---|
+--   | app.current_site_id='site-a', app.api_key_lookup unset | site-a rows only |
+--   | app.current_site_id unset,     app.api_key_lookup='true' | ALL rows (cross-tenant) |
+--   | app.current_site_id='site-a', app.api_key_lookup='true' | ALL rows (OR wins) |
+--   | both unset                                         | NO rows |
+--
+-- The last row is the important one: a bug that forgets to set
+-- either session variable still fails closed. The only way to get
+-- cross-tenant SELECT is to EXPLICITLY set the bypass flag.
+--
+-- # Security properties
+--
+--   * INSERT/UPDATE/DELETE are unaffected. Only the SELECT policy
+--     set has a new disjunct. Accidental writes inside the bypass
+--     scope are blocked by the unchanged INSERT/UPDATE/DELETE
+--     policies from 0006 (they still require strict equality on
+--     `app.current_site_id`, which the bypass scope deliberately
+--     does NOT set).
+--   * The bypass flag is set via `set_config('app.api_key_lookup',
+--     'true', true)` with `is_local = true`, so it is
+--     transaction-scoped and auto-clears on COMMIT/ROLLBACK. There
+--     is no cross-transaction leakage even under pool connection
+--     reuse.
+--   * The helper that sets the flag
+--     (`withApiKeyLookupScope` in `server/services/api-keys/api-key-service.ts`)
+--     is a PRIVATE function inside the one file that needs it. A
+--     grep for `app.api_key_lookup` across the whole codebase must
+--     return exactly two matches after this migration applies: the
+--     helper in that file and the policy in this file. Any third
+--     match is a bug and should fail code review.
+--   * The bypass value 'true' is a hardcoded string constant in the
+--     helper — no request input can influence it.
+--
+-- # Apply procedure
+--
+--   1. Apply 0006 first if not already applied. 0007 depends on the
+--      strict policies from 0006 being in place (technically a
+--      second policy can be added without the first, but the policy
+--      set as a whole is only consistent after 0006 + 0007).
+--   2. Run `npm run test:rls` against the target database. The test
+--      file has been updated in lockstep with this migration:
+--        - An existing assertion ("missing session var returns zero
+--          rows") still passes because it sets neither session var.
+--        - New assertion: "SELECT with app.api_key_lookup=true
+--          returns rows regardless of site binding" — proves the
+--          bypass works.
+--        - New assertion: "INSERT with bypass flag set is STILL
+--          rejected unless site_id matches" — proves the bypass is
+--          SELECT-only.
+--   3. Take a DB snapshot.
+--   4. Apply inside a transaction:
+--        BEGIN;
+--        \i migrations/0007_add_api_keys_lookup_bypass_policy.sql
+--        -- Smoke test: set app.api_key_lookup='true' in a sub-transaction,
+--        -- SELECT by key_hash, verify a row is returned.
+--        COMMIT;
+--   5. Re-run `npm run test:rls`. All assertions must pass.
+--   6. Record the apply in the next STATUS revision.
+--
+-- # Rollback
+--
+-- To revert this migration:
+--
+--   DROP POLICY IF EXISTS "api_keys_auth_lookup" ON "api_keys";
+--
+-- Rolling back restores the post-0006 state: strict equality on all
+-- four verbs, validateKey broken under non-superuser roles. If
+-- production is running on this state, route validateKey through a
+-- superuser connection (option a from 0006) until 0007 can be
+-- reapplied or replaced.
+-- ============================================================================
+
+DROP POLICY IF EXISTS "api_keys_auth_lookup" ON "api_keys";
+
+CREATE POLICY "api_keys_auth_lookup" ON "api_keys"
+  FOR SELECT
+  USING (current_setting('app.api_key_lookup', true) = 'true');
+
+-- =============================================================================
+-- Verification query (for manual post-migration check)
+-- =============================================================================
+--
+-- After applying, verify both SELECT policies are present:
+--
+--   SELECT policyname, cmd, qual
+--   FROM pg_policies
+--   WHERE tablename = 'api_keys'
+--     AND cmd = 'SELECT'
+--   ORDER BY policyname;
+--
+-- Expect two rows:
+--   api_keys_auth_lookup    | SELECT | (current_setting('app.api_key_lookup'::text, true) = 'true'::text)
+--   api_keys_isolation_select | SELECT | (site_id = current_setting('app.current_site_id'::text, true))
+--
+-- And verify INSERT/UPDATE/DELETE policies are unchanged:
+--
+--   SELECT policyname, cmd, with_check
+--   FROM pg_policies
+--   WHERE tablename = 'api_keys'
+--     AND cmd IN ('INSERT', 'UPDATE', 'DELETE')
+--   ORDER BY cmd, policyname;
+--
+-- Expect three rows with `with_check` (or `qual` for DELETE) matching
+-- the strict equality form from 0006.

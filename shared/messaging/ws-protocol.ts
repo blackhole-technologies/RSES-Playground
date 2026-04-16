@@ -883,6 +883,10 @@ export type ServerToClientMessage =
   | WSAuthFailureMessage
   | WSAuthTokenRefreshMessage
   | WSPresenceSyncMessage
+  // Presence updates are also relayed server→client when one user updates
+  // their presence and the server broadcasts to the rest of the workspace.
+  // Originally a client-only message; added 2026-04-14 to match handler usage.
+  | WSPresenceUpdateMessage
   | WSTypingUpdateMessage
   | WSChannelJoinedMessage
   | WSChannelLeftMessage

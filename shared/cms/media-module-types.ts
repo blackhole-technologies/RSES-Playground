@@ -1922,16 +1922,5 @@ export const DEFAULT_MODULE_CONFIGS = {
 // =============================================================================
 // TYPE EXPORTS
 // =============================================================================
-
-export type {
-  ModuleTier,
-  MediaCapability,
-  StorageProvider,
-  StorageCapability,
-  CdnProviderType,
-  CdnFeature,
-  CdnMetric,
-  CdnDimension,
-  NsfwCategory,
-  MediaEvent,
-};
+// All types above are inline-exported. Trailing `export type { … }` block
+// removed 2026-04-14 to fix duplicate-export errors.

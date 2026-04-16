@@ -1,0 +1,181 @@
+-- Relax feature_rollout_history INSERT policy to allow global (NULL site_id) rows
+-- Migration: 0005_relax_rollout_history_insert_policy
+-- Milestone: M1.4 Phase D prep (ROADMAP_2026-04-14_v6.md → will roll into v7)
+-- Depends on: 0003_add_tenant_rls_policies
+--
+-- ============================================================================
+-- MANUAL APPLY ONLY — review, test, then apply before migration 0004
+-- ============================================================================
+--
+-- This migration is staged but not applied by default. Unlike 0004
+-- (which is a one-way door), 0005 is reversible — it swaps one policy
+-- definition for another. The reason it is staged rather than
+-- auto-applied is that the change is subtly security-relevant and the
+-- user deserves to read the rationale before it lands on any DB.
+--
+-- Apply procedure:
+--   1. Run `npm run test:rls` against staging Postgres:
+--        TEST_DATABASE_URL=postgres://... npm run test:rls
+--      The test file has been updated in lockstep with this migration,
+--      so assertions 10 and the new "mismatched non-null insert still
+--      rejected" must pass. Any failure means the policies drifted
+--      from the expected end-state — fix before proceeding.
+--   2. Apply inside a transaction:
+--        BEGIN;
+--        \i migrations/0005_relax_rollout_history_insert_policy.sql
+--        -- Smoke test: a write against feature_rollout_history with
+--        -- siteId NULL succeeds from a non-superuser role that has
+--        -- app.current_site_id set to any non-empty string.
+--        COMMIT;
+--   3. Record the apply in the next STATUS revision and update the
+--      prior STATUS row to note "0005 applied on <env> at <time>".
+--   4. Only after 0005 is applied should you proceed with 0004
+--      (FORCE ROW LEVEL SECURITY). Applying 0004 before 0005 will
+--      cause the admin-side global audit writes (createFlag,
+--      addDependency, removeDependency in FeatureFlagService) to
+--      throw "new row violates row-level security policy" on every
+--      invocation.
+--
+-- # Why this migration exists
+--
+-- Migration 0003 (Phase B) created this policy on feature_rollout_history:
+--
+--     CREATE POLICY site_isolation_insert ON feature_rollout_history
+--       FOR INSERT
+--       WITH CHECK (site_id = current_setting('app.current_site_id', true));
+--
+-- The SELECT policy on the same table already allows NULL site_id
+-- reads (global events are public audit history), but the INSERT check
+-- requires strict equality — which rejects NULL. That asymmetry was
+-- discovered during the 2026-04-15 Phase D bypass audit (see
+-- docs/STATUS_2026-04-15_v7.md § "Phase D readiness audit"):
+--
+--   * `FeatureFlagService.createFlag` at index.ts:212,
+--   * `FeatureFlagService.addDependency` at index.ts:692,
+--   * `FeatureFlagService.removeDependency` at index.ts:729,
+--
+-- all call `rolloutHistoryStorage.record({...})` without a siteId.
+-- These are admin-side actions invoked through RBAC-gated routes and
+-- carry the semantic meaning "a system-wide, global event" — they
+-- intentionally have no site context. Under Phase B policy they are
+-- rejected by the INSERT WITH CHECK whenever the calling role is not
+-- a Postgres superuser. Under Phase D (FORCE) they would be rejected
+-- even for the superuser role.
+--
+-- Resolution (this migration): relax the INSERT check to
+--
+--     WITH CHECK (site_id IS NULL OR site_id = current_setting('app.current_site_id', true))
+--
+-- which exactly mirrors the SELECT policy. Net effect on the threat
+-- surface:
+--
+--   * (Accepted) A tenant-bound request can now insert a NULL-site_id
+--     row. Mitigation: the admin routes that reach this code path are
+--     gated by RBAC markers requiring `feature-flags:write` or
+--     equivalent (see server/services/feature-flags/routes.ts and
+--     site-routes.ts). Tenants without that permission cannot reach
+--     the record() call in the first place. RLS is Layer 3 of a
+--     three-layer defense (see docs/security/TENANT-ISOLATION.md);
+--     Layer 1 (route auth + RBAC) remains the primary gate for who
+--     can write to the audit log at all.
+--
+--   * (Preserved) A tenant-bound request still cannot insert a row
+--     with a *different* non-null site_id. The second disjunct
+--     (`site_id = current_setting(...)`) enforces that. The test
+--     file has an explicit assertion for this case post-migration.
+--
+--   * (Preserved) SELECT semantics are unchanged. Global rows remain
+--     readable by all tenants; per-site rows remain isolated.
+--
+--   * (Preserved) UPDATE and DELETE policies are unchanged. A tenant
+--     still cannot modify or delete global (NULL) rows — only read
+--     them.
+--
+-- # Alternative considered: Option 2 (superuser connection)
+--
+-- An alternative was to route global audit writes through a second
+-- DB client connected as a Postgres superuser (which bypasses
+-- policies under ENABLE and remains authoritative under FORCE on
+-- tables explicitly left NO FORCE for that role). This was rejected
+-- on 2026-04-15 for the following reasons:
+--
+--   * It introduces a new DB connection pool and an env var
+--     (SUPERUSER_DATABASE_URL) that must be provisioned in every
+--     deployment environment including dev.
+--   * It doubles the test surface: now every request-handling path
+--     has two possible DB clients and tests must cover both.
+--   * The security benefit relative to Option 1 is contingent on an
+--     attacker reaching the admin-side record() call paths *without*
+--     passing through RBAC — which would itself be a Layer 1 bug
+--     that this migration cannot and does not paper over.
+--   * The uncommitted diff on the branch is already very large and
+--     the connection-pool work is an open-ended change surface.
+--
+-- If the user later decides Option 2 is warranted, 0005 can be
+-- reverted via the rollback below and replaced with the connection-
+-- pool approach. The two approaches are mutually exclusive but
+-- neither locks out the other.
+--
+-- # Alternative considered: Option 3 (sentinel siteId)
+--
+-- A sentinel value like `"__global__"` could be injected by
+-- FeatureFlagService on the caller side, making every audit row
+-- strictly site-bound. Rejected because:
+--
+--   * It changes the semantic contract of feature_rollout_history
+--     (NULL currently means "global") and requires a data migration
+--     for existing rows.
+--   * Every query that filters by siteId would need to know about
+--     the sentinel, or mistakenly count global rows as belonging to
+--     the sentinel "site".
+--   * It leaks into the Drizzle schema, the types in @shared/admin,
+--     and the React admin UI display code — a much wider blast
+--     radius than a two-line policy change.
+--
+-- # Rollback
+--
+-- To revert this migration (restore 0003's strict check):
+--
+--   DROP POLICY IF EXISTS "site_isolation_insert" ON "feature_rollout_history";
+--   CREATE POLICY "site_isolation_insert" ON "feature_rollout_history"
+--     FOR INSERT
+--     WITH CHECK (site_id = current_setting('app.current_site_id', true));
+--
+-- After rolling back, you must also revert the RLS test file
+-- changes introduced in lockstep — specifically the updated
+-- assertion 10 and the new mismatched-site assertion under
+-- "feature_rollout_history — NULL site_id handling" in
+-- tests/rls/rls-isolation.test.ts.
+-- ============================================================================
+
+-- =============================================================================
+-- feature_rollout_history — relaxed INSERT policy
+-- =============================================================================
+--
+-- Drop the strict check and re-create with the SELECT-matching
+-- disjunctive form. DROP+CREATE (rather than ALTER POLICY) keeps the
+-- diff readable and is cheap because the policy is not referenced by
+-- any foreign objects.
+
+DROP POLICY IF EXISTS "site_isolation_insert" ON "feature_rollout_history";
+
+CREATE POLICY "site_isolation_insert" ON "feature_rollout_history"
+  FOR INSERT
+  WITH CHECK (
+    site_id IS NULL
+    OR site_id = current_setting('app.current_site_id', true)
+  );
+
+-- =============================================================================
+-- Verification query (for manual post-migration check)
+-- =============================================================================
+--
+-- After applying, confirm the policy text matches:
+--
+--   SELECT policyname, cmd, qual, with_check
+--   FROM pg_policies
+--   WHERE tablename = 'feature_rollout_history'
+--     AND policyname = 'site_isolation_insert';
+--
+-- Expect with_check to contain:
+--   ((site_id IS NULL) OR (site_id = current_setting('app.current_site_id'::text, true)))

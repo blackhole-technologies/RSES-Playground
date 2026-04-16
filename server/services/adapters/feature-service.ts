@@ -86,9 +86,9 @@ export function createFeatureServiceAdapter(): FeatureService {
         for (const [flagKey, featureKey] of Object.entries(flagToFeatureMap)) {
           try {
             const result = await flagService.evaluate(flagKey, context);
-            if (result.evaluated) {
-              (features as any)[featureKey] = result.enabled;
-            }
+            // EvaluationResult doesn't have an `evaluated` field; the
+            // presence of `enabled` indicates a real evaluation.
+            (features as any)[featureKey] = result.enabled;
           } catch {
             // Flag doesn't exist, use default
           }

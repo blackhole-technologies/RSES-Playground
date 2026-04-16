@@ -1217,6 +1217,16 @@ export interface SiteFederation {
 
 /**
  * Cross-site message.
+ *
+ * The `type` field accepts the full discriminator set used by the
+ * cross-site orchestration service. The narrow `"event" | "action" |
+ * "result" | "health"` union from earlier drafts was replaced with
+ * `string` 2026-04-14 because the runtime enum in
+ * cross-site-orchestration.ts has many more variants (HELLO,
+ * HELLO_RESPONSE, GOODBYE, EVENT_BROADCAST, ACTION_REQUEST, etc.) that
+ * the narrow union excluded. The orchestrator is the source of truth for
+ * the discriminator values; this interface stays string-typed to avoid
+ * a circular type dependency.
  */
 export interface CrossSiteMessage {
   /** Message identifier */
@@ -1225,8 +1235,8 @@ export interface CrossSiteMessage {
   sourceSiteId: SiteId;
   /** Target site */
   targetSiteId: SiteId;
-  /** Message type */
-  type: "event" | "action" | "result" | "health";
+  /** Message type — see CrossSiteMessageType in cross-site-orchestration.ts */
+  type: string;
   /** Message payload */
   payload: unknown;
   /** Digital signature */

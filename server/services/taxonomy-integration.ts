@@ -250,8 +250,10 @@ export interface TaxonomyIntegrationConfig {
     maxConcurrent?: number;
     debounceMs?: number;
   };
-  /** Conflict resolution strategy */
-  conflictResolution?: "first_match" | "all_matches" | "highest_priority" | "most_specific" | "manual";
+  /** Conflict resolution strategy. "most_specific" is excluded because
+   * the auto-resolution config (ConfigConflictResolutionStrategy) doesn't
+   * support it — it's an internal-only strategy used by the engine. */
+  conflictResolution?: "first_match" | "all_matches" | "highest_priority" | "manual";
 }
 
 /**

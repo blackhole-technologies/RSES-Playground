@@ -1150,9 +1150,10 @@ export interface ITaskService {
   completeTask(taskId: string): Promise<Task>;
 
   // Workflows
-  createWorkflow(userId: string, workflow: Omit<Workflow, "id" | "createdAt" | "updatedAt">): Promise<Workflow>;
+  createWorkflow(userId: string, workflow: Omit<Workflow, "id" | "userId" | "executionCount" | "createdAt" | "updatedAt">): Promise<Workflow>;
   executeWorkflow(workflowId: string, inputs?: Record<string, unknown>): Promise<WorkflowState>;
-  getWorkflowStatus(executionId: string): Promise<WorkflowState>;
+  // Returns null when no execution is currently running for the given id.
+  getWorkflowStatus(executionId: string): Promise<WorkflowState | null>;
 
   // Automation
   parseNaturalLanguageTask(text: string): Promise<Partial<Task>>;

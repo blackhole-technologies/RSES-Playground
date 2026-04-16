@@ -10,6 +10,9 @@
  * @standards GDPR, CCPA, NIST Privacy Framework, ISO 27701
  */
 
+// Re-export the config so security/index.ts can import from this module.
+export type { ComplianceConfig } from './types';
+
 import type {
   ComplianceConfig,
   ComplianceFramework,

@@ -637,7 +637,9 @@ export class ConflictResolutionEngine extends EventEmitter {
       "merge",
       new MergeResolver(
         options.fieldMergers ||
-          new Map([
+          // Type the Map literal explicitly so the value type is inferred
+          // as the FieldMerger interface, not the union of concrete classes.
+          new Map<string, FieldMerger>([
             ["body", new TextFieldMerger()],
             ["tags", new ArrayFieldMerger()],
             ["view_count", new NumericFieldMerger("max")],
@@ -857,15 +859,6 @@ export class ConflictResolutionEngine extends EventEmitter {
 // =============================================================================
 // EXPORTS
 // =============================================================================
-
-export {
-  ConflictDetector,
-  LastWriteWinsResolver,
-  FirstWriteWinsResolver,
-  PrimaryWinsResolver,
-  ForkResolver,
-  MergeResolver,
-  TextFieldMerger,
-  ArrayFieldMerger,
-  NumericFieldMerger,
-};
+// All classes are individually exported above via `export class …`.
+// A trailing `export { … }` block here would produce TS2323 duplicate-export
+// errors. Removed 2026-04-14 (cleanup of pre-existing tech debt).

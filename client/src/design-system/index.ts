@@ -42,6 +42,16 @@
 // TYPES
 // ============================================================================
 
+// Local imports needed by helper functions defined later in this file.
+// The corresponding `export type { … } from './types/w3c-tokens'` re-exports
+// these symbols for external consumers; this block brings them into scope
+// for internal use.
+import type {
+  ResponsiveToken,
+  ContextualToken,
+  ContentContext,
+} from "./types/w3c-tokens";
+
 // W3C Design Tokens Types
 export type {
   TokenValue,
@@ -164,7 +174,8 @@ export type {
   HydrationStrategy,
   LazyHydrationConfig,
   PerformanceMetrics,
-  PerformanceRecommendation,
+  // PerformanceRecommendation removed 2026-04-14: not exported by ./core/performance.
+  // If the type is needed in the future, define it in core/performance.ts first.
 } from './core/performance';
 
 // ============================================================================

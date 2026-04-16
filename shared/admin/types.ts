@@ -178,11 +178,17 @@ export type FeatureFlag = z.infer<typeof featureFlagSchema>;
 
 /**
  * Site-specific feature override
+ *
+ * `reason` was added 2026-04-14 to match the database column on
+ * `siteFeatureOverrides` (shared/schema.ts). The DB has stored a reason
+ * since the feature flag tables were introduced; the schema type was
+ * out of sync.
  */
 export const siteFeatureOverrideSchema = z.object({
   siteId: z.string(),
   featureKey: z.string(),
   enabled: z.boolean(),
+  reason: z.string().optional(),
   percentageRollout: percentageRolloutSchema.optional(),
   targetingRules: z.array(targetingRuleSchema).optional(),
   createdAt: z.string(),
@@ -425,14 +431,23 @@ export type RolloutEventType = (typeof RolloutEventType)[keyof typeof RolloutEve
 
 /**
  * Rollout history event
+ *
+ * `performedBy` was added 2026-04-14 to match the database column on
+ * `featureRolloutHistory` (shared/schema.ts). It is the legacy field name
+ * for the actor who triggered the event; `userId` is the newer canonical
+ * field but both are populated for backwards compatibility.
+ *
+ * `userId` is now optional because the DB column is nullable — events
+ * triggered by the system (not by a specific user) leave it null.
  */
 export const rolloutEventSchema = z.object({
   id: z.string(),
   featureKey: z.string(),
   eventType: z.nativeEnum(RolloutEventType),
   timestamp: z.string(),
-  userId: z.string(),
+  userId: z.string().optional(),
   userName: z.string().optional(),
+  performedBy: z.string().optional(),
 
   // === Context ===
   siteId: z.string().optional(),

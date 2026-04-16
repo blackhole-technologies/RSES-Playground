@@ -16,18 +16,8 @@ const useHttps = fs.existsSync(certPath) && fs.existsSync(keyPath);
 export async function setupVite(server: Server, app: Express) {
   const port = parseInt(process.env.PORT || "5000", 10);
 
-  // HMR over WSS with self-signed certs doesn't work reliably in browsers.
-  // Disable HMR when using HTTPS to avoid WebSocket connection errors.
-  // The app still works, just requires manual refresh.
-  const hmrConfig = useHttps
-    ? false  // Disable HMR over HTTPS
-    : {
-        server,
-        path: "/vite-hmr",
-        protocol: "ws" as const,
-        host: "localhost",
-        clientPort: port,
-      };
+  // HMR config - use default Vite HMR when no HTTPS
+  const hmrConfig = useHttps ? false : true;
 
   const serverOptions = {
     middlewareMode: true,
@@ -54,6 +44,11 @@ export async function setupVite(server: Server, app: Express) {
   app.use("/{*path}", async (req, res, next) => {
     const url = req.originalUrl;
 
+    // Skip API routes and health endpoints - they should be handled by Express routers
+    if (url.startsWith("/api/") || url.startsWith("/ws") || url === "/health" || url === "/ready") {
+      return next();
+    }
+
     try {
       const clientTemplate = path.resolve(
         import.meta.dirname,
@@ -68,7 +63,7 @@ export async function setupVite(server: Server, app: Express) {
         `src="/src/main.tsx"`,
         `src="/src/main.tsx?v=${nanoid()}"`,
       );
-      const page = await vite.transformIndexHtml(url, template);
+      let page = await vite.transformIndexHtml(url, template);
       res.status(200).set({ "Content-Type": "text/html" }).end(page);
     } catch (e) {
       vite.ssrFixStacktrace(e as Error);

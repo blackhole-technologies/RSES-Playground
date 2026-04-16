@@ -20,6 +20,14 @@
 
 export * from './types';
 
+// Local imports needed by the MultisiteModule class defined later in this
+// file. The `export { … } from` blocks below also expose these symbols to
+// external consumers, but those re-exports do not bring the names into
+// local scope — the class still needs its own import. Same pattern as
+// server/cqrs-es/index.ts.
+import { DomainRouter } from './routing/domain-router';
+import { ProvisioningService } from './provisioning/provisioning-service';
+
 // =============================================================================
 // SITE CONTEXT
 // =============================================================================

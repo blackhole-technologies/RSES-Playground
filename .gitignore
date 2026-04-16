@@ -4,10 +4,30 @@ dist
 server/public
 vite.config.ts.*
 *.tar.gz
+
 # Environment and local files
 .env
 .env.*
 .local/
 
+# Editor backup files — these should never be in version control. If you need
+# to keep a working snapshot of a file, use git stash or a feature branch.
+*.bak
+*.orig
+*.swp
+*~
+
 # Certificate backups
 *.pem.bak
+
+# Disabled certs directory — kept locally but never tracked
+certs.disabled/
+
+# Test results and coverage artifacts
+test-results/
+coverage/
+
+# OS junk
+.AppleDouble
+.LSOverride
+Thumbs.db

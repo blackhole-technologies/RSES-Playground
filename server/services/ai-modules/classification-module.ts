@@ -231,7 +231,9 @@ export class ClassificationModule extends EventEmitter implements AIModuleInterf
 
   constructor() {
     super();
-    this.config = CLASSIFICATION_MODULE_MANIFEST.defaultConfig as ClassificationModuleConfig;
+    // The manifest's defaultConfig is typed as Record<string, unknown>;
+    // cast through unknown to the module-specific config shape.
+    this.config = CLASSIFICATION_MODULE_MANIFEST.defaultConfig as unknown as ClassificationModuleConfig;
   }
 
   /**
@@ -246,8 +248,10 @@ export class ClassificationModule extends EventEmitter implements AIModuleInterf
       ...config,
     } as ClassificationModuleConfig;
 
-    // Validate configuration
-    const validation = await this.validateConfig(this.config);
+    // Validate configuration. validateConfig expects Record<string, unknown>;
+    // ClassificationModuleConfig is structurally compatible at runtime but
+    // not at the type level, so we widen via an explicit cast.
+    const validation = await this.validateConfig(this.config as unknown as Record<string, unknown>);
     if (!validation.valid) {
       throw new Error(`Invalid configuration: ${validation.errors.map(e => e.message).join(", ")}`);
     }
@@ -802,8 +806,5 @@ export function createClassificationModule(): ClassificationModule {
 // =============================================================================
 // EXPORTS
 // =============================================================================
-
-export {
-  CLASSIFICATION_MODULE_MANIFEST,
-  ClassificationModule,
-};
+// Both symbols are inline-exported above. Trailing block removed 2026-04-14
+// to fix duplicate-export errors.

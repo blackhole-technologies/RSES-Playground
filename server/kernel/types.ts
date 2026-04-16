@@ -545,8 +545,8 @@ export interface ModuleHealth {
   /** Human-readable status message */
   message?: string;
 
-  /** Optional metrics (latency, queue size, etc.) */
-  metrics?: Record<string, number>;
+  /** Optional metrics (latency, queue size, nested subsystem stats, etc.) */
+  metrics?: Record<string, unknown>;
 
   /** Timestamp of this health check */
   timestamp?: Date;
