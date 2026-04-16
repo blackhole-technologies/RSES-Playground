@@ -9,7 +9,8 @@ import type { DomainMapping, SiteConfig } from "../../multisite/types";
 import type { DomainRegistry } from "../../multisite/routing/domain-router";
 import { db } from "../../db";
 import { domains, sites } from "@shared/multisite-schema";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
+import { withDbSiteScope } from "../../lib/tenant-scoped";
 import { createModuleLogger } from "../../logger";
 import { createDefaultSiteConfig } from "./network-db";
 
@@ -144,7 +145,14 @@ export function createDomainRegistryAdapter(): DomainRegistry {
       };
     },
 
-    async deleteDomainMapping(id: string): Promise<void> {
+    async deleteDomainMapping(id: string, siteId?: string): Promise<void> {
+      if (siteId) {
+        await withDbSiteScope(siteId, async (tx) => {
+          const txDb = tx as unknown as typeof db;
+          await txDb.delete(domains).where(and(eq(domains.id, id), eq(domains.siteId, siteId)));
+        });
+        return;
+      }
       await db.delete(domains).where(eq(domains.id, id));
     },
 

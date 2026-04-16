@@ -11,6 +11,7 @@
 import { db } from "../../db";
 import { auditLogs, type AuditLog, type InsertAuditLog, type EventCategory, type AuditOutcome, type ActorType } from "../../../shared/rbac-schema";
 import { eq, and, gte, lte, desc, sql, or, like } from "drizzle-orm";
+import { withDbSiteScope } from "../../lib/tenant-scoped";
 import { randomUUID } from "crypto";
 import type { Request } from "express";
 import { safeLikePattern } from "../../lib/sql-utils";
@@ -165,7 +166,7 @@ class AuditService {
       changes = this.computeChanges(options.previousState, options.newState);
     }
 
-    await db.insert(auditLogs).values({
+    const values = {
       eventId,
       eventType: options.eventType,
       eventCategory: options.eventCategory,
@@ -189,7 +190,19 @@ class AuditService {
       errorMessage: options.errorMessage,
       sensitiveDataMasked: Boolean(options.newState),
       timestamp: new Date(),
-    });
+    };
+
+    // When siteId is available, wrap in withDbSiteScope so the 0010
+    // policy's INSERT WITH CHECK is satisfied. When null (global
+    // event like a login), the disjunctive policy allows NULL inserts.
+    if (context.siteId) {
+      await withDbSiteScope(context.siteId, async (tx) => {
+        const txDb = tx as unknown as typeof db;
+        await txDb.insert(auditLogs).values(values);
+      });
+    } else {
+      await db.insert(auditLogs).values(values);
+    }
 
     return eventId;
   }
@@ -409,6 +422,12 @@ class AuditService {
 
     const batch = this.queue.splice(0, this.BATCH_SIZE);
 
+    // Batch insert of mixed-siteId events. Scoping each item via
+    // withDbSiteScope would require grouping by siteId and running
+    // separate transactions — complex and slow for a batch path.
+    // Under FORCE RLS, this must run as a superuser or via a
+    // dedicated admin connection. The dev-query guard throws on this
+    // path in NODE_ENV=development; run the flush under test/prod.
     try {
       await db.insert(auditLogs).values(batch);
     } catch (error) {

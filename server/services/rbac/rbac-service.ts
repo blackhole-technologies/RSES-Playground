@@ -12,6 +12,7 @@
  */
 
 import { db } from "../../db";
+import { withDbSiteScope } from "../../lib/tenant-scoped";
 import {
   roles,
   permissions,
@@ -308,26 +309,39 @@ class RBACService {
    * Assign a role to a user.
    */
   async assignRole(options: AssignRoleOptions, context?: AuditContext): Promise<UserRole> {
-    const [assignment] = await db
-      .insert(userRoles)
-      .values({
-        userId: options.userId,
-        roleId: options.roleId,
-        siteId: options.siteId,
-        expiresAt: options.expiresAt,
-        grantedBy: context?.actorId,
-        reason: options.reason,
-      })
-      .onConflictDoUpdate({
-        target: [userRoles.userId, userRoles.roleId, userRoles.siteId],
-        set: {
+    // Upsert with onConflictDoUpdate — scoped() doesn't cover this
+    // shape, so use withDbSiteScope when siteId is available. When
+    // siteId is null (global role grant), the 0010 policy's
+    // disjunctive INSERT WITH CHECK allows NULL inserts.
+    const doInsert = async (client: typeof db) => {
+      const [row] = await client
+        .insert(userRoles)
+        .values({
+          userId: options.userId,
+          roleId: options.roleId,
+          siteId: options.siteId,
           expiresAt: options.expiresAt,
           grantedBy: context?.actorId,
           reason: options.reason,
-          grantedAt: new Date(),
-        },
-      })
-      .returning();
+        })
+        .onConflictDoUpdate({
+          target: [userRoles.userId, userRoles.roleId, userRoles.siteId],
+          set: {
+            expiresAt: options.expiresAt,
+            grantedBy: context?.actorId,
+            reason: options.reason,
+            grantedAt: new Date(),
+          },
+        })
+        .returning();
+      return row;
+    };
+
+    const assignment = options.siteId
+      ? await withDbSiteScope(options.siteId, async (tx) =>
+          doInsert(tx as unknown as typeof db)
+        )
+      : await doInsert(db);
 
     invalidateCache(options.userId, options.siteId);
 
@@ -358,7 +372,14 @@ class RBACService {
       conditions.push(isNull(userRoles.siteId));
     }
 
-    const result = await db.delete(userRoles).where(and(...conditions)).returning();
+    const doDelete = async (client: typeof db) =>
+      client.delete(userRoles).where(and(...conditions)).returning();
+
+    const result = siteId
+      ? await withDbSiteScope(siteId, async (tx) =>
+          doDelete(tx as unknown as typeof db)
+        )
+      : await doDelete(db);
 
     invalidateCache(userId, siteId);
 
@@ -423,27 +444,36 @@ class RBACService {
       throw new Error(`Permission not found: ${options.permissionKey}`);
     }
 
-    await db
-      .insert(userPermissions)
-      .values({
-        userId: options.userId,
-        permissionId: permission.id,
-        siteId: options.siteId,
-        grant: options.grant !== false,
-        expiresAt: options.expiresAt,
-        grantedBy: context?.actorId,
-        reason: options.reason,
-      })
-      .onConflictDoUpdate({
-        target: [userPermissions.userId, userPermissions.permissionId, userPermissions.siteId],
-        set: {
+    const doUpsert = async (client: typeof db) =>
+      client
+        .insert(userPermissions)
+        .values({
+          userId: options.userId,
+          permissionId: permission.id,
+          siteId: options.siteId,
           grant: options.grant !== false,
           expiresAt: options.expiresAt,
           grantedBy: context?.actorId,
           reason: options.reason,
-          grantedAt: new Date(),
-        },
-      });
+        })
+        .onConflictDoUpdate({
+          target: [userPermissions.userId, userPermissions.permissionId, userPermissions.siteId],
+          set: {
+            grant: options.grant !== false,
+            expiresAt: options.expiresAt,
+            grantedBy: context?.actorId,
+            reason: options.reason,
+            grantedAt: new Date(),
+          },
+        });
+
+    if (options.siteId) {
+      await withDbSiteScope(options.siteId, async (tx) =>
+        doUpsert(tx as unknown as typeof db)
+      );
+    } else {
+      await doUpsert(db);
+    }
 
     invalidateCache(options.userId, options.siteId);
 
@@ -484,7 +514,14 @@ class RBACService {
       conditions.push(isNull(userPermissions.siteId));
     }
 
-    const result = await db.delete(userPermissions).where(and(...conditions)).returning();
+    const doDelete = async (client: typeof db) =>
+      client.delete(userPermissions).where(and(...conditions)).returning();
+
+    const result = siteId
+      ? await withDbSiteScope(siteId, async (tx) =>
+          doDelete(tx as unknown as typeof db)
+        )
+      : await doDelete(db);
 
     invalidateCache(userId, siteId);
 
