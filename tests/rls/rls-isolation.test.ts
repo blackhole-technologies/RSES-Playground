@@ -185,6 +185,30 @@ describe.skipIf(!CONNECTION_URL)(
           ('site-a', 'ff_pro_b', 'hash_a2', 'site-a key 2'),
           ('site-b', 'ff_pro_c', 'hash_b1', 'site-b key 1');
       `);
+      // M1.8c — multisite tables
+      await client.query(`
+        CREATE TABLE domains (
+          id text PRIMARY KEY,
+          site_id varchar(64) NOT NULL,
+          domain varchar(255) NOT NULL
+        );
+      `);
+      await client.query(`
+        CREATE TABLE site_role_assignments (
+          identity_id varchar(64) NOT NULL,
+          site_id varchar(64) NOT NULL,
+          role varchar(20) NOT NULL,
+          PRIMARY KEY (identity_id, site_id)
+        );
+      `);
+      await client.query(`
+        CREATE TABLE site_analytics (
+          id serial PRIMARY KEY,
+          site_id varchar(64) NOT NULL,
+          page_views integer NOT NULL DEFAULT 0
+        );
+      `);
+
       // Seed one row per site on each social_media table. The
       // assertions only need to distinguish site-a from site-b.
       await client.query(`
@@ -201,6 +225,21 @@ describe.skipIf(!CONNECTION_URL)(
         INSERT INTO social_campaigns (id, site_id, name, status) VALUES
           ('sc-a1', 'site-a', 'launch-a', 'active'),
           ('sc-b1', 'site-b', 'launch-b', 'draft');
+      `);
+      await client.query(`
+        INSERT INTO domains (id, site_id, domain) VALUES
+          ('d-a1', 'site-a', 'site-a.example.com'),
+          ('d-b1', 'site-b', 'site-b.example.com');
+      `);
+      await client.query(`
+        INSERT INTO site_role_assignments (identity_id, site_id, role) VALUES
+          ('user-1', 'site-a', 'admin'),
+          ('user-2', 'site-b', 'editor');
+      `);
+      await client.query(`
+        INSERT INTO site_analytics (site_id, page_views) VALUES
+          ('site-a', 100),
+          ('site-b', 200);
       `);
 
       // Policy DDL copied verbatim from migrations/0003. Keeping it
@@ -368,6 +407,50 @@ describe.skipIf(!CONNECTION_URL)(
         CREATE POLICY social_campaigns_isolation_delete ON social_campaigns
           FOR DELETE
           USING (site_id = current_setting('app.current_site_id', true));
+      `);
+
+      // M1.8c — multisite policies from migration 0009
+      await client.query(`
+        ALTER TABLE domains ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE domains FORCE ROW LEVEL SECURITY;
+        CREATE POLICY domains_isolation_select ON domains
+          FOR SELECT USING (site_id = current_setting('app.current_site_id', true));
+        CREATE POLICY domains_isolation_insert ON domains
+          FOR INSERT WITH CHECK (site_id = current_setting('app.current_site_id', true));
+        CREATE POLICY domains_isolation_update ON domains
+          FOR UPDATE
+          USING (site_id = current_setting('app.current_site_id', true))
+          WITH CHECK (site_id = current_setting('app.current_site_id', true));
+        CREATE POLICY domains_isolation_delete ON domains
+          FOR DELETE USING (site_id = current_setting('app.current_site_id', true));
+      `);
+      await client.query(`
+        ALTER TABLE site_role_assignments ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE site_role_assignments FORCE ROW LEVEL SECURITY;
+        CREATE POLICY role_assignments_isolation_select ON site_role_assignments
+          FOR SELECT USING (site_id = current_setting('app.current_site_id', true));
+        CREATE POLICY role_assignments_isolation_insert ON site_role_assignments
+          FOR INSERT WITH CHECK (site_id = current_setting('app.current_site_id', true));
+        CREATE POLICY role_assignments_isolation_update ON site_role_assignments
+          FOR UPDATE
+          USING (site_id = current_setting('app.current_site_id', true))
+          WITH CHECK (site_id = current_setting('app.current_site_id', true));
+        CREATE POLICY role_assignments_isolation_delete ON site_role_assignments
+          FOR DELETE USING (site_id = current_setting('app.current_site_id', true));
+      `);
+      await client.query(`
+        ALTER TABLE site_analytics ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE site_analytics FORCE ROW LEVEL SECURITY;
+        CREATE POLICY analytics_isolation_select ON site_analytics
+          FOR SELECT USING (site_id = current_setting('app.current_site_id', true));
+        CREATE POLICY analytics_isolation_insert ON site_analytics
+          FOR INSERT WITH CHECK (site_id = current_setting('app.current_site_id', true));
+        CREATE POLICY analytics_isolation_update ON site_analytics
+          FOR UPDATE
+          USING (site_id = current_setting('app.current_site_id', true))
+          WITH CHECK (site_id = current_setting('app.current_site_id', true));
+        CREATE POLICY analytics_isolation_delete ON site_analytics
+          FOR DELETE USING (site_id = current_setting('app.current_site_id', true));
       `);
     }, 30000);
 
@@ -888,6 +971,66 @@ describe.skipIf(!CONNECTION_URL)(
       });
       expect(rows.length).toBe(1);
       expect(rows[0].site_id).toBe("site-a");
+    });
+
+    // =========================================================================
+    // domains / site_role_assignments / site_analytics — M1.8c (migration 0009)
+    // =========================================================================
+
+    it("domains: site-a sees only site-a rows", async () => {
+      const rows = await withSite("site-a", async () => {
+        const result = await client.query("SELECT * FROM domains");
+        return result.rows;
+      });
+      expect(rows.length).toBe(1);
+      expect(rows[0].site_id).toBe("site-a");
+    });
+
+    it("domains: INSERT for mismatched site is rejected", async () => {
+      await expect(
+        withSite("site-a", async () => {
+          await client.query(
+            "INSERT INTO domains (id, site_id, domain) VALUES ('d-x', 'site-b', 'evil.com')"
+          );
+        })
+      ).rejects.toThrow(/row-level security/i);
+    });
+
+    it("site_role_assignments: site-b sees only site-b rows", async () => {
+      const rows = await withSite("site-b", async () => {
+        const result = await client.query("SELECT * FROM site_role_assignments");
+        return result.rows;
+      });
+      expect(rows.length).toBe(1);
+      expect(rows[0].site_id).toBe("site-b");
+    });
+
+    it("site_role_assignments: UPDATE for mismatched site affects zero rows", async () => {
+      const updated = await withSite("site-b", async () => {
+        const result = await client.query(
+          "UPDATE site_role_assignments SET role = 'admin' WHERE site_id = 'site-a'"
+        );
+        return result.rowCount;
+      });
+      expect(updated).toBe(0);
+    });
+
+    it("site_analytics: missing session var returns zero rows", async () => {
+      const rows = await withSite(null, async () => {
+        const result = await client.query("SELECT * FROM site_analytics");
+        return result.rows;
+      });
+      expect(rows.length).toBe(0);
+    });
+
+    it("site_analytics: INSERT for the bound site succeeds", async () => {
+      await expect(
+        withSite("site-a", async () => {
+          await client.query(
+            "INSERT INTO site_analytics (site_id, page_views) VALUES ('site-a', 50)"
+          );
+        })
+      ).resolves.not.toThrow();
     });
   }
 );

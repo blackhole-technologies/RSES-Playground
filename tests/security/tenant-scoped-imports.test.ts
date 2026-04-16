@@ -47,6 +47,9 @@ const MULTI_TENANT_TABLE_NAMES = [
   "socialAccounts",
   "socialPosts",
   "socialCampaigns",
+  "domains",
+  "siteRoleAssignments",
+  "siteAnalytics",
 ] as const;
 
 /**
@@ -89,6 +92,12 @@ const ALLOWED_UNSCOPED_FILES = new Set([
   // allow-list so the static lint passes; the runtime dev-query guard
   // still enforces the invariant on the by-id paths in dev mode.
   "server/services/social-media/pg-storage.ts",
+  // domain-registry and network-db import `domains` from multisite-schema.
+  // Both are infrastructure adapters that manage domains across sites
+  // (admin/provisioning context). By-id methods will need siteId threading
+  // in M1.8c-follow; the dev-query guard enforces the gap signal.
+  "server/services/adapters/domain-registry.ts",
+  "server/services/adapters/network-db.ts",
   // Schema definition files declare the tables.
   "shared/schema.ts",
   // Tests need to be able to assert behavior directly.

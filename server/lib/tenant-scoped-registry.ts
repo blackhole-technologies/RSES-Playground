@@ -23,6 +23,11 @@ import {
   socialPosts,
   socialCampaigns,
 } from "@shared/social-media-schema";
+import {
+  domains,
+  siteRoleAssignments,
+  siteAnalytics,
+} from "@shared/multisite-schema";
 import { registerMultiTenantTable } from "./tenant-scoped";
 
 /**
@@ -49,5 +54,15 @@ export function registerMultiTenantTables(): number {
   registerMultiTenantTable(socialAccounts, socialAccounts.siteId);
   registerMultiTenantTable(socialPosts, socialPosts.siteId);
   registerMultiTenantTable(socialCampaigns, socialCampaigns.siteId);
-  return 6;
+  // M1.8c — multisite-schema tables. Only the 3 straightforward
+  // NOT-NULL site_id tables are registered here. Deferred:
+  //   - provisioningRequests (nullable site_id, set mid-lifecycle)
+  //   - syndicationLinks (dual source/target site_id columns —
+  //     novel policy shape, needs separate design)
+  //   - sites (site_id IS the primary key — this is the registry
+  //     table itself, not a multi-tenant table)
+  registerMultiTenantTable(domains, domains.siteId);
+  registerMultiTenantTable(siteRoleAssignments, siteRoleAssignments.siteId);
+  registerMultiTenantTable(siteAnalytics, siteAnalytics.siteId);
+  return 9;
 }
