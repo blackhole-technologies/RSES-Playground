@@ -55,12 +55,7 @@ export class SiteScopedSocialMediaService {
   }
 
   async disconnectAccount(accountId: string): Promise<boolean> {
-    // Verify account belongs to this site
-    const accounts = await this.service.getAccounts(this.siteId);
-    const account = accounts.find(a => a.id === accountId);
-    if (!account) return false;
-
-    return this.service.disconnectAccount(accountId);
+    return this.service.disconnectAccount(this.siteId, accountId);
   }
 
   async getAccounts(): Promise<SocialAccount[]> {
@@ -68,11 +63,7 @@ export class SiteScopedSocialMediaService {
   }
 
   async refreshAccountToken(accountId: string): Promise<boolean> {
-    const accounts = await this.service.getAccounts(this.siteId);
-    const account = accounts.find(a => a.id === accountId);
-    if (!account) return false;
-
-    return this.service.refreshAccountToken(accountId);
+    return this.service.refreshAccountToken(this.siteId, accountId);
   }
 
   // ===========================================================================
@@ -84,17 +75,11 @@ export class SiteScopedSocialMediaService {
   }
 
   async updatePost(postId: string, updates: Partial<CreatePostRequest>): Promise<SocialPost | null> {
-    const post = await this.service.getPost(postId);
-    if (!post || post.siteId !== this.siteId) return null;
-
-    return this.service.updatePost(postId, updates);
+    return this.service.updatePost(this.siteId, postId, updates);
   }
 
   async deletePost(postId: string): Promise<boolean> {
-    const post = await this.service.getPost(postId);
-    if (!post || post.siteId !== this.siteId) return false;
-
-    return this.service.deletePost(postId);
+    return this.service.deletePost(this.siteId, postId);
   }
 
   async getPosts(options?: PostQueryOptions): Promise<{ posts: SocialPost[]; total: number }> {
@@ -102,9 +87,7 @@ export class SiteScopedSocialMediaService {
   }
 
   async getPost(postId: string): Promise<SocialPost | null> {
-    const post = await this.service.getPost(postId);
-    if (!post || post.siteId !== this.siteId) return null;
-    return post;
+    return this.service.getPost(postId, this.siteId);
   }
 
   // ===========================================================================
@@ -112,25 +95,14 @@ export class SiteScopedSocialMediaService {
   // ===========================================================================
 
   async publishPost(postId: string): Promise<void> {
-    const post = await this.service.getPost(postId);
-    if (!post || post.siteId !== this.siteId) {
-      throw new Error("Post not found");
-    }
-
-    return this.service.publishPost(postId);
+    return this.service.publishPost(postId, this.siteId);
   }
 
   async schedulePost(postId: string, scheduledAt: Date): Promise<SocialPost | null> {
-    const post = await this.service.getPost(postId);
-    if (!post || post.siteId !== this.siteId) return null;
-
     return this.service.schedulePost(postId, scheduledAt);
   }
 
   async cancelScheduledPost(postId: string): Promise<boolean> {
-    const post = await this.service.getPost(postId);
-    if (!post || post.siteId !== this.siteId) return false;
-
     return this.service.cancelScheduledPost(postId);
   }
 
@@ -151,9 +123,6 @@ export class SiteScopedSocialMediaService {
   // ===========================================================================
 
   async getPostAnalytics(postId: string): Promise<AggregatedAnalytics | null> {
-    const post = await this.service.getPost(postId);
-    if (!post || post.siteId !== this.siteId) return null;
-
     return this.service.getPostAnalytics(postId);
   }
 
@@ -181,10 +150,6 @@ export class SiteScopedSocialMediaService {
   }
 
   async getCampaignPerformance(campaignId: string): Promise<AggregatedAnalytics | null> {
-    const campaigns = await this.service.getCampaigns(this.siteId);
-    const campaign = campaigns.find(c => c.id === campaignId);
-    if (!campaign) return null;
-
     return this.service.getCampaignPerformance(campaignId);
   }
 

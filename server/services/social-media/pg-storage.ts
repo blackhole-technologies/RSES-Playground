@@ -69,15 +69,21 @@ export class PgSocialAccountStorage implements ISocialAccountStorage {
   // access and are unusable in development mode for the social-media
   // feature. Staging / production / test paths are unaffected.
 
-  async getById(id: string): Promise<SocialAccount | null> {
-    // FIXME (M1.8b-follow) — caller must provide siteId; wrap in scoped()
+  async getById(id: string, siteId?: string): Promise<SocialAccount | null> {
+    if (siteId) {
+      const row = await scoped(siteId).selectOne(socialAccounts, { id });
+      return (row as SocialAccount) ?? null;
+    }
+    // Bootstrap path — background-job callers that don't have siteId yet.
+    // Dev-query guard throws in NODE_ENV=development; run under test/prod.
     const [account] = await db.select().from(socialAccounts).where(eq(socialAccounts.id, id));
     return account ?? null;
   }
 
   async getByPlatformAccountId(platform: SocialPlatform, accountId: string): Promise<SocialAccount | null> {
-    // FIXME (M1.8b-follow) — lookup is platform+accountId without site;
-    // either convert to cross-tenant admin path or thread siteId through
+    // Cross-tenant lookup by platform+accountId. Used by connectAccount
+    // to check if an account already exists before creating. The platform
+    // account is globally unique, not site-scoped.
     const [account] = await db.select().from(socialAccounts)
       .where(and(
         eq(socialAccounts.platform, platform),
@@ -119,8 +125,17 @@ export class PgSocialAccountStorage implements ISocialAccountStorage {
     });
   }
 
-  async update(id: string, updates: Partial<SocialAccount>): Promise<SocialAccount | null> {
-    // FIXME (M1.8b-follow) — needs siteId to scope
+  async update(id: string, updates: Partial<SocialAccount>, siteId?: string): Promise<SocialAccount | null> {
+    if (siteId) {
+      return withDbSiteScope(siteId, async (tx) => {
+        const txDb = tx as unknown as typeof db;
+        const [updated] = await txDb.update(socialAccounts)
+          .set({ ...updates, updatedAt: new Date() })
+          .where(and(eq(socialAccounts.id, id), eq(socialAccounts.siteId, siteId)))
+          .returning();
+        return updated ?? null;
+      });
+    }
     const [updated] = await db.update(socialAccounts)
       .set({ ...updates, updatedAt: new Date() })
       .where(eq(socialAccounts.id, id))
@@ -128,8 +143,15 @@ export class PgSocialAccountStorage implements ISocialAccountStorage {
     return updated ?? null;
   }
 
-  async delete(id: string): Promise<boolean> {
-    // FIXME (M1.8b-follow) — needs siteId to scope
+  async delete(id: string, siteId?: string): Promise<boolean> {
+    if (siteId) {
+      return withDbSiteScope(siteId, async (tx) => {
+        const txDb = tx as unknown as typeof db;
+        const result = await txDb.delete(socialAccounts)
+          .where(and(eq(socialAccounts.id, id), eq(socialAccounts.siteId, siteId)));
+        return (result.rowCount ?? 0) > 0;
+      });
+    }
     const result = await db.delete(socialAccounts).where(eq(socialAccounts.id, id));
     return (result.rowCount ?? 0) > 0;
   }
@@ -183,8 +205,11 @@ export class PgSocialPostStorage implements ISocialPostStorage {
   // in NODE_ENV=development until the service-layer refactor threads
   // siteId through `social-media-service.ts`.
 
-  async getById(id: string): Promise<SocialPost | null> {
-    // FIXME (M1.8b-follow) — caller must provide siteId
+  async getById(id: string, siteId?: string): Promise<SocialPost | null> {
+    if (siteId) {
+      const row = await scoped(siteId).selectOne(socialPosts, { id });
+      return (row as SocialPost) ?? null;
+    }
     const [post] = await db.select().from(socialPosts).where(eq(socialPosts.id, id));
     return post ?? null;
   }
@@ -254,8 +279,17 @@ export class PgSocialPostStorage implements ISocialPostStorage {
     });
   }
 
-  async update(id: string, updates: Partial<SocialPost>): Promise<SocialPost | null> {
-    // FIXME (M1.8b-follow) — caller must provide siteId
+  async update(id: string, updates: Partial<SocialPost>, siteId?: string): Promise<SocialPost | null> {
+    if (siteId) {
+      return withDbSiteScope(siteId, async (tx) => {
+        const txDb = tx as unknown as typeof db;
+        const [updated] = await txDb.update(socialPosts)
+          .set({ ...updates, updatedAt: new Date() })
+          .where(and(eq(socialPosts.id, id), eq(socialPosts.siteId, siteId)))
+          .returning();
+        return updated ?? null;
+      });
+    }
     const [updated] = await db.update(socialPosts)
       .set({ ...updates, updatedAt: new Date() })
       .where(eq(socialPosts.id, id))
@@ -263,22 +297,29 @@ export class PgSocialPostStorage implements ISocialPostStorage {
     return updated ?? null;
   }
 
-  async delete(id: string): Promise<boolean> {
-    // FIXME (M1.8b-follow) — caller must provide siteId
+  async delete(id: string, siteId?: string): Promise<boolean> {
+    if (siteId) {
+      return withDbSiteScope(siteId, async (tx) => {
+        const txDb = tx as unknown as typeof db;
+        const result = await txDb.delete(socialPosts)
+          .where(and(eq(socialPosts.id, id), eq(socialPosts.siteId, siteId)));
+        return (result.rowCount ?? 0) > 0;
+      });
+    }
     const result = await db.delete(socialPosts).where(eq(socialPosts.id, id));
     return (result.rowCount ?? 0) > 0;
   }
 
-  async updateStatus(id: string, status: PostStatus): Promise<SocialPost | null> {
-    return this.update(id, { status });
+  async updateStatus(id: string, status: PostStatus, siteId?: string): Promise<SocialPost | null> {
+    return this.update(id, { status }, siteId);
   }
 
-  async updatePlatformStatus(id: string, platform: SocialPlatform, platformStatus: PlatformPostStatus): Promise<SocialPost | null> {
-    const post = await this.getById(id);
+  async updatePlatformStatus(id: string, platform: SocialPlatform, platformStatus: PlatformPostStatus, siteId?: string): Promise<SocialPost | null> {
+    const post = await this.getById(id, siteId);
     if (!post) return null;
 
     const platformStatuses = { ...(post.platformStatuses as Record<string, PlatformPostStatus>), [platform]: platformStatus };
-    return this.update(id, { platformStatuses });
+    return this.update(id, { platformStatuses }, siteId ?? post.siteId);
   }
 
   async getScheduled(siteId: string, before: Date): Promise<SocialPost[]> {
@@ -294,10 +335,15 @@ export class PgSocialPostStorage implements ISocialPostStorage {
     });
   }
 
-  async getByCampaign(campaignId: string): Promise<SocialPost[]> {
-    // FIXME (M1.8b-follow) — campaignId doesn't inherently carry site
-    // binding; either thread siteId through or mark intentional
-    // cross-tenant admin query
+  async getByCampaign(campaignId: string, siteId?: string): Promise<SocialPost[]> {
+    if (siteId) {
+      return withDbSiteScope(siteId, async (tx) => {
+        const txDb = tx as unknown as typeof db;
+        return txDb.select().from(socialPosts)
+          .where(and(eq(socialPosts.campaignId, campaignId), eq(socialPosts.siteId, siteId)))
+          .orderBy(desc(socialPosts.createdAt));
+      });
+    }
     return db.select().from(socialPosts)
       .where(eq(socialPosts.campaignId, campaignId))
       .orderBy(desc(socialPosts.createdAt));
@@ -508,13 +554,19 @@ export class PgPostAnalyticsStorage implements IPostAnalyticsStorage {
     return this.aggregate(analytics);
   }
 
-  async getAggregatedByCampaign(campaignId: string): Promise<AggregatedAnalytics | null> {
-    // FIXME (M1.8b-follow) — reads socialPosts (a registered tagged
-    // table) without site binding. Service-layer refactor must
-    // provide siteId and wrap in withDbSiteScope. Until then, this
-    // path throws from the dev-query guard in NODE_ENV=development.
-    const posts = await db.select().from(socialPosts)
-      .where(eq(socialPosts.campaignId, campaignId));
+  async getAggregatedByCampaign(campaignId: string, siteId?: string): Promise<AggregatedAnalytics | null> {
+    // socialPosts is a registered table — use withDbSiteScope when
+    // siteId is available so RLS and the dev guard are satisfied.
+    // When siteId is omitted (background analytics job), this falls
+    // back to raw db access (guard throws in dev; works in test/prod).
+    const posts = siteId
+      ? await withDbSiteScope(siteId, async (tx) => {
+          const txDb = tx as unknown as typeof db;
+          return txDb.select().from(socialPosts)
+            .where(and(eq(socialPosts.campaignId, campaignId), eq(socialPosts.siteId, siteId)));
+        })
+      : await db.select().from(socialPosts)
+          .where(eq(socialPosts.campaignId, campaignId));
 
     if (!posts.length) return null;
 
@@ -622,8 +674,11 @@ export class PgPostAnalyticsStorage implements IPostAnalyticsStorage {
 // =============================================================================
 
 export class PgCampaignStorage implements ICampaignStorage {
-  async getById(id: string): Promise<SocialCampaign | null> {
-    // FIXME (M1.8b-follow) — caller must provide siteId
+  async getById(id: string, siteId?: string): Promise<SocialCampaign | null> {
+    if (siteId) {
+      const row = await scoped(siteId).selectOne(socialCampaigns, { id });
+      return (row as SocialCampaign) ?? null;
+    }
     const [campaign] = await db.select().from(socialCampaigns).where(eq(socialCampaigns.id, id));
     return campaign ?? null;
   }
@@ -648,8 +703,17 @@ export class PgCampaignStorage implements ICampaignStorage {
     });
   }
 
-  async update(id: string, updates: Partial<SocialCampaign>): Promise<SocialCampaign | null> {
-    // FIXME (M1.8b-follow) — caller must provide siteId
+  async update(id: string, updates: Partial<SocialCampaign>, siteId?: string): Promise<SocialCampaign | null> {
+    if (siteId) {
+      return withDbSiteScope(siteId, async (tx) => {
+        const txDb = tx as unknown as typeof db;
+        const [updated] = await txDb.update(socialCampaigns)
+          .set({ ...updates, updatedAt: new Date() })
+          .where(and(eq(socialCampaigns.id, id), eq(socialCampaigns.siteId, siteId)))
+          .returning();
+        return updated ?? null;
+      });
+    }
     const [updated] = await db.update(socialCampaigns)
       .set({ ...updates, updatedAt: new Date() })
       .where(eq(socialCampaigns.id, id))
@@ -657,8 +721,15 @@ export class PgCampaignStorage implements ICampaignStorage {
     return updated ?? null;
   }
 
-  async delete(id: string): Promise<boolean> {
-    // FIXME (M1.8b-follow) — caller must provide siteId
+  async delete(id: string, siteId?: string): Promise<boolean> {
+    if (siteId) {
+      return withDbSiteScope(siteId, async (tx) => {
+        const txDb = tx as unknown as typeof db;
+        const result = await txDb.delete(socialCampaigns)
+          .where(and(eq(socialCampaigns.id, id), eq(socialCampaigns.siteId, siteId)));
+        return (result.rowCount ?? 0) > 0;
+      });
+    }
     const result = await db.delete(socialCampaigns).where(eq(socialCampaigns.id, id));
     return (result.rowCount ?? 0) > 0;
   }
@@ -675,19 +746,21 @@ export class PgCampaignStorage implements ICampaignStorage {
     });
   }
 
-  async updateMetrics(id: string): Promise<SocialCampaign | null> {
-    // FIXME (M1.8b-follow) — this method fetches a campaign by id,
-    // then reads socialPosts and socialPostAnalytics without site
-    // binding. Needs the service-layer refactor to provide siteId
-    // and wrap the whole aggregation in a single withDbSiteScope
-    // transaction. Raw `db` access here will throw from the
-    // dev-query guard in NODE_ENV=development.
-    const campaign = await this.getById(id);
+  async updateMetrics(id: string, siteId?: string): Promise<SocialCampaign | null> {
+    const campaign = await this.getById(id, siteId);
     if (!campaign) return null;
 
-    // Count posts and aggregate metrics
-    const posts = await db.select().from(socialPosts)
-      .where(eq(socialPosts.campaignId, id));
+    // Use the campaign's siteId for the scoped post lookup.
+    const effectiveSiteId = siteId ?? campaign.siteId;
+
+    // Count posts and aggregate metrics — run the socialPosts read
+    // inside withDbSiteScope so the dev-query guard and RLS policy
+    // are both satisfied.
+    const posts = await withDbSiteScope(effectiveSiteId, async (tx) => {
+      const txDb = tx as unknown as typeof db;
+      return txDb.select().from(socialPosts)
+        .where(eq(socialPosts.campaignId, id));
+    });
 
     const analyticsStorage = new PgPostAnalyticsStorage();
     let totalImpressions = 0;
@@ -705,7 +778,7 @@ export class PgCampaignStorage implements ICampaignStorage {
       totalPosts: posts.length,
       totalImpressions,
       totalEngagements,
-    });
+    }, effectiveSiteId);
   }
 }
 

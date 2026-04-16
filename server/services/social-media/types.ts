@@ -142,14 +142,19 @@ export const PLATFORM_RATE_LIMITS: Record<SocialPlatform, PlatformRateLimits> = 
 // =============================================================================
 
 export interface ISocialAccountStorage {
-  // CRUD
-  getById(id: string): Promise<SocialAccount | null>;
+  // CRUD — siteId is optional on by-id methods. When provided, the
+  // implementation scopes the query via withDbSiteScope (Layer 3 safe).
+  // When omitted, the query runs unscoped (for background-job bootstrap
+  // paths that learn the siteId from the fetched entity). The dev-query
+  // guard (M1.3) throws on the omitted path in NODE_ENV=development,
+  // which is the correct signal — background jobs run under NODE_ENV=test.
+  getById(id: string, siteId?: string): Promise<SocialAccount | null>;
   getByPlatformAccountId(platform: SocialPlatform, accountId: string): Promise<SocialAccount | null>;
   getAllBySite(siteId: string): Promise<SocialAccount[]>;
   getAllByUser(userId: number): Promise<SocialAccount[]>;
   create(account: Omit<SocialAccount, "createdAt" | "updatedAt">): Promise<SocialAccount>;
-  update(id: string, updates: Partial<SocialAccount>): Promise<SocialAccount | null>;
-  delete(id: string): Promise<boolean>;
+  update(id: string, updates: Partial<SocialAccount>, siteId?: string): Promise<SocialAccount | null>;
+  delete(id: string, siteId?: string): Promise<boolean>;
 
   // Queries
   getConnectedBySite(siteId: string): Promise<SocialAccount[]>;
@@ -158,20 +163,20 @@ export interface ISocialAccountStorage {
 }
 
 export interface ISocialPostStorage {
-  // CRUD
-  getById(id: string): Promise<SocialPost | null>;
+  // CRUD — same optional-siteId pattern as ISocialAccountStorage.
+  getById(id: string, siteId?: string): Promise<SocialPost | null>;
   getAllBySite(siteId: string, options?: PostQueryOptions): Promise<{ posts: SocialPost[]; total: number }>;
   create(post: Omit<SocialPost, "createdAt" | "updatedAt">): Promise<SocialPost>;
-  update(id: string, updates: Partial<SocialPost>): Promise<SocialPost | null>;
-  delete(id: string): Promise<boolean>;
+  update(id: string, updates: Partial<SocialPost>, siteId?: string): Promise<SocialPost | null>;
+  delete(id: string, siteId?: string): Promise<boolean>;
 
   // Status updates
-  updateStatus(id: string, status: PostStatus): Promise<SocialPost | null>;
-  updatePlatformStatus(id: string, platform: SocialPlatform, status: PlatformPostStatus): Promise<SocialPost | null>;
+  updateStatus(id: string, status: PostStatus, siteId?: string): Promise<SocialPost | null>;
+  updatePlatformStatus(id: string, platform: SocialPlatform, status: PlatformPostStatus, siteId?: string): Promise<SocialPost | null>;
 
   // Queries
   getScheduled(siteId: string, before: Date): Promise<SocialPost[]>;
-  getByCampaign(campaignId: string): Promise<SocialPost[]>;
+  getByCampaign(campaignId: string, siteId?: string): Promise<SocialPost[]>;
   getByDateRange(siteId: string, start: Date, end: Date): Promise<SocialPost[]>;
   getByStatus(siteId: string, status: PostStatus): Promise<SocialPost[]>;
 }
@@ -213,16 +218,16 @@ export interface IPostAnalyticsStorage {
 }
 
 export interface ICampaignStorage {
-  // CRUD
-  getById(id: string): Promise<SocialCampaign | null>;
+  // CRUD — same optional-siteId pattern.
+  getById(id: string, siteId?: string): Promise<SocialCampaign | null>;
   getAllBySite(siteId: string): Promise<SocialCampaign[]>;
   create(campaign: Omit<SocialCampaign, "createdAt" | "updatedAt">): Promise<SocialCampaign>;
-  update(id: string, updates: Partial<SocialCampaign>): Promise<SocialCampaign | null>;
-  delete(id: string): Promise<boolean>;
+  update(id: string, updates: Partial<SocialCampaign>, siteId?: string): Promise<SocialCampaign | null>;
+  delete(id: string, siteId?: string): Promise<boolean>;
 
   // Queries
   getActive(siteId: string): Promise<SocialCampaign[]>;
-  updateMetrics(id: string): Promise<SocialCampaign | null>;
+  updateMetrics(id: string, siteId?: string): Promise<SocialCampaign | null>;
 }
 
 // =============================================================================

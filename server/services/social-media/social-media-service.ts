@@ -174,17 +174,17 @@ export class SocialMediaService extends EventEmitter {
     // Get account info
     const accountInfo = await connector.getAccountInfo(tokens);
 
-    // Check if account already exists
+    // Check if account already exists (cross-tenant by platform+accountId)
     const existing = await this.accountStorage.getByPlatformAccountId(platform, accountInfo.accountId);
     if (existing) {
-      // Update existing account
+      // Update existing account — use the caller's siteId for scoping
       const updated = await this.accountStorage.update(existing.id, {
         connected: true,
         credentialId: tokens.accessToken, // Simplified - would encrypt
         tokenExpiresAt: tokens.expiresAt,
         lastSyncAt: new Date(),
         followerCount: accountInfo.followerCount,
-      });
+      }, siteId);
 
       this.emitEvent({
         type: "account:refreshed",
@@ -234,8 +234,8 @@ export class SocialMediaService extends EventEmitter {
   /**
    * Disconnect a social media account
    */
-  async disconnectAccount(accountId: string): Promise<boolean> {
-    const account = await this.accountStorage.getById(accountId);
+  async disconnectAccount(siteId: string, accountId: string): Promise<boolean> {
+    const account = await this.accountStorage.getById(accountId, siteId);
     if (!account) return false;
 
     // Revoke tokens
@@ -247,7 +247,7 @@ export class SocialMediaService extends EventEmitter {
     }
 
     // Mark as disconnected
-    await this.accountStorage.update(accountId, { connected: false });
+    await this.accountStorage.update(accountId, { connected: false }, siteId);
 
     this.emitEvent({
       type: "account:disconnected",
@@ -271,8 +271,8 @@ export class SocialMediaService extends EventEmitter {
   /**
    * Refresh token for an account
    */
-  async refreshAccountToken(accountId: string): Promise<boolean> {
-    const account = await this.accountStorage.getById(accountId);
+  async refreshAccountToken(siteId: string, accountId: string): Promise<boolean> {
+    const account = await this.accountStorage.getById(accountId, siteId);
     if (!account || !account.connected) return false;
 
     try {
@@ -283,12 +283,12 @@ export class SocialMediaService extends EventEmitter {
         credentialId: tokens.accessToken,
         tokenExpiresAt: tokens.expiresAt,
         lastSyncAt: new Date(),
-      });
+      }, siteId);
 
       return true;
     } catch (error) {
       log.error({ accountId, error }, "Failed to refresh token");
-      await this.accountStorage.update(accountId, { connected: false });
+      await this.accountStorage.update(accountId, { connected: false }, siteId);
 
       this.emitEvent({
         type: "account:error",
@@ -344,8 +344,8 @@ export class SocialMediaService extends EventEmitter {
   /**
    * Update an existing post
    */
-  async updatePost(postId: string, updates: Partial<CreatePostRequest>): Promise<SocialPost | null> {
-    const post = await this.postStorage.getById(postId);
+  async updatePost(siteId: string, postId: string, updates: Partial<CreatePostRequest>): Promise<SocialPost | null> {
+    const post = await this.postStorage.getById(postId, siteId);
     if (!post) return null;
 
     if (post.status === "published" || post.status === "publishing") {
@@ -359,7 +359,7 @@ export class SocialMediaService extends EventEmitter {
       platforms: updates.platforms ?? post.platforms,
       tags: updates.tags ?? post.tags,
       campaignId: updates.campaignId ?? post.campaignId,
-    });
+    }, siteId);
 
     if (updated) {
       this.emitEvent({
@@ -377,15 +377,15 @@ export class SocialMediaService extends EventEmitter {
   /**
    * Delete a post
    */
-  async deletePost(postId: string): Promise<boolean> {
-    const post = await this.postStorage.getById(postId);
+  async deletePost(siteId: string, postId: string): Promise<boolean> {
+    const post = await this.postStorage.getById(postId, siteId);
     if (!post) return false;
 
     // Cancel any pending queue jobs
     await this.publishingQueue?.cancelPost(postId);
 
     // Delete the post
-    const deleted = await this.postStorage.delete(postId);
+    const deleted = await this.postStorage.delete(postId, siteId);
 
     if (deleted) {
       this.emitEvent({
@@ -410,8 +410,8 @@ export class SocialMediaService extends EventEmitter {
   /**
    * Get a single post
    */
-  async getPost(postId: string): Promise<SocialPost | null> {
-    return this.postStorage.getById(postId);
+  async getPost(postId: string, siteId?: string): Promise<SocialPost | null> {
+    return this.postStorage.getById(postId, siteId);
   }
 
   // ===========================================================================
@@ -421,8 +421,8 @@ export class SocialMediaService extends EventEmitter {
   /**
    * Publish a post immediately
    */
-  async publishPost(postId: string): Promise<void> {
-    const post = await this.postStorage.getById(postId);
+  async publishPost(postId: string, siteId?: string): Promise<void> {
+    const post = await this.postStorage.getById(postId, siteId);
     if (!post) throw new Error("Post not found");
 
     if (post.status === "published" || post.status === "publishing") {
