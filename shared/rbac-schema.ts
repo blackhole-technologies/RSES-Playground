@@ -275,7 +275,12 @@ export type ResourceType =
   | "projects"
   | "sites"
   | "audit_logs"
-  | "settings";
+  | "settings"
+  // M1.7-seed: resources for forward-referenced permission keys
+  // used by the M1.7 route migration (see HANDOFF_2026-04-15_v1.md).
+  | "incidents"
+  | "watcher"
+  | "automation";
 
 /** Standard CRUD actions */
 export type ActionType = "create" | "read" | "update" | "delete" | "list" | "manage";

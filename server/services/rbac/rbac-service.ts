@@ -774,6 +774,36 @@ class RBACService {
       { key: "roles:update", displayName: "Update Roles", resource: "roles", action: "update" },
       { key: "roles:delete", displayName: "Delete Roles", resource: "roles", action: "delete" },
       { key: "permissions:manage", displayName: "Manage Permissions", resource: "permissions", action: "manage" },
+
+      // M1.7-seed: forward-referenced permission keys for resources
+      // added during the M1.7 route marker migration. Until this seed
+      // runs, `rbacService.hasPermission` fails closed on unknown keys
+      // (see rbac-service.ts:516), so non-admins get 403 and admins
+      // bypass via `user.isAdmin`. After seeding, delegated RBAC
+      // works: a non-admin user with the explicit grant can access
+      // the resource without being a full admin.
+
+      // Incidents
+      { key: "incidents:read", displayName: "View Incidents", resource: "incidents", action: "read" },
+      { key: "incidents:create", displayName: "Create Incidents", resource: "incidents", action: "create" },
+      { key: "incidents:update", displayName: "Update Incidents", resource: "incidents", action: "update" },
+      { key: "incidents:delete", displayName: "Delete Incidents", resource: "incidents", action: "delete" },
+
+      // Watcher (Intelligent File Watcher admin routes)
+      { key: "watcher:read", displayName: "View Watchers", resource: "watcher", action: "read" },
+      { key: "watcher:manage", displayName: "Manage Watchers", resource: "watcher", action: "manage" },
+
+      // Automation (Workflow engine routes)
+      { key: "automation:read", displayName: "View Automations", resource: "automation", action: "read" },
+      { key: "automation:create", displayName: "Create Automations", resource: "automation", action: "create" },
+      { key: "automation:update", displayName: "Update Automations", resource: "automation", action: "update" },
+      { key: "automation:delete", displayName: "Delete Automations", resource: "automation", action: "delete" },
+
+      // Projects
+      { key: "projects:read", displayName: "View Projects", resource: "projects", action: "read" },
+      { key: "projects:create", displayName: "Create Projects", resource: "projects", action: "create" },
+      { key: "projects:update", displayName: "Update Projects", resource: "projects", action: "update" },
+      { key: "projects:delete", displayName: "Delete Projects", resource: "projects", action: "delete" },
     ];
 
     for (const perm of defaultPermissions) {
@@ -841,9 +871,13 @@ class RBACService {
     const [editor] = await db.select().from(roles).where(eq(roles.name, "editor")).limit(1);
     if (editor) {
       const editorPerms = allPerms.filter((p) =>
-        ["configs:read", "configs:create", "configs:update", "feature_flags:read", "sites:read"].includes(
-          p.key
-        )
+        [
+          "configs:read", "configs:create", "configs:update",
+          "feature_flags:read", "sites:read",
+          // M1.7-seed: editors can read the new resource types but
+          // not create/update/delete them (those stay admin-only).
+          "projects:read", "incidents:read", "watcher:read", "automation:read",
+        ].includes(p.key)
       );
       for (const perm of editorPerms) {
         await db
