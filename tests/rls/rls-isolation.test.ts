@@ -241,6 +241,35 @@ describe.skipIf(!CONNECTION_URL)(
           ('site-a', 100),
           ('site-b', 200);
       `);
+      // M1.8d — RBAC tables (NULLABLE site_id)
+      await client.query(`
+        CREATE TABLE user_roles (
+          id serial PRIMARY KEY,
+          user_id integer NOT NULL,
+          role_id integer NOT NULL,
+          site_id varchar(64)
+        );
+      `);
+      await client.query(`
+        CREATE TABLE audit_logs (
+          id serial PRIMARY KEY,
+          event_type varchar(64) NOT NULL,
+          site_id varchar(64),
+          action varchar(32) NOT NULL
+        );
+      `);
+      await client.query(`
+        INSERT INTO user_roles (user_id, role_id, site_id) VALUES
+          (1, 1, 'site-a'),
+          (2, 1, 'site-b'),
+          (3, 2, NULL);
+      `);
+      await client.query(`
+        INSERT INTO audit_logs (event_type, site_id, action) VALUES
+          ('login', 'site-a', 'create'),
+          ('login', 'site-b', 'create'),
+          ('system.startup', NULL, 'create');
+      `);
 
       // Policy DDL copied verbatim from migrations/0003. Keeping it
       // inline here means this test does not depend on a migration
@@ -451,6 +480,34 @@ describe.skipIf(!CONNECTION_URL)(
           WITH CHECK (site_id = current_setting('app.current_site_id', true));
         CREATE POLICY analytics_isolation_delete ON site_analytics
           FOR DELETE USING (site_id = current_setting('app.current_site_id', true));
+      `);
+
+      // M1.8d — RBAC policies (NULLABLE site_id, disjunctive SELECT/INSERT)
+      await client.query(`
+        ALTER TABLE user_roles ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE user_roles FORCE ROW LEVEL SECURITY;
+        CREATE POLICY user_roles_isolation_select ON user_roles
+          FOR SELECT USING (site_id IS NULL OR site_id = current_setting('app.current_site_id', true));
+        CREATE POLICY user_roles_isolation_insert ON user_roles
+          FOR INSERT WITH CHECK (site_id IS NULL OR site_id = current_setting('app.current_site_id', true));
+        CREATE POLICY user_roles_isolation_update ON user_roles
+          FOR UPDATE
+          USING (site_id = current_setting('app.current_site_id', true))
+          WITH CHECK (site_id = current_setting('app.current_site_id', true));
+        CREATE POLICY user_roles_isolation_delete ON user_roles
+          FOR DELETE USING (site_id = current_setting('app.current_site_id', true));
+      `);
+      await client.query(`
+        ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE audit_logs FORCE ROW LEVEL SECURITY;
+        CREATE POLICY audit_logs_isolation_select ON audit_logs
+          FOR SELECT USING (site_id IS NULL OR site_id = current_setting('app.current_site_id', true));
+        CREATE POLICY audit_logs_isolation_insert ON audit_logs
+          FOR INSERT WITH CHECK (site_id IS NULL OR site_id = current_setting('app.current_site_id', true));
+        CREATE POLICY audit_logs_isolation_update ON audit_logs
+          FOR UPDATE
+          USING (site_id = current_setting('app.current_site_id', true))
+          WITH CHECK (site_id = current_setting('app.current_site_id', true));
       `);
     }, 30000);
 
@@ -1031,6 +1088,85 @@ describe.skipIf(!CONNECTION_URL)(
           );
         })
       ).resolves.not.toThrow();
+    });
+
+    // =========================================================================
+    // user_roles / audit_logs — M1.8d NULLABLE site_id (migration 0010)
+    // =========================================================================
+
+    it("user_roles: site-a sees site-a rows AND global (NULL) rows", async () => {
+      const rows = await withSite("site-a", async () => {
+        const result = await client.query("SELECT * FROM user_roles ORDER BY id");
+        return result.rows;
+      });
+      // site-a has 1 row; global has 1 row (user_id=3, NULL site)
+      expect(rows.length).toBe(2);
+      const siteIds = rows.map((r) => r.site_id);
+      expect(siteIds).toContain("site-a");
+      expect(siteIds).toContain(null);
+    });
+
+    it("user_roles: site-b does not see site-a rows but sees global rows", async () => {
+      const rows = await withSite("site-b", async () => {
+        const result = await client.query("SELECT * FROM user_roles ORDER BY id");
+        return result.rows;
+      });
+      expect(rows.length).toBe(2);
+      const siteIds = rows.map((r) => r.site_id);
+      expect(siteIds).toContain("site-b");
+      expect(siteIds).toContain(null);
+      expect(siteIds).not.toContain("site-a");
+    });
+
+    it("user_roles: INSERT with NULL site_id is allowed (global grant)", async () => {
+      await expect(
+        withSite("site-a", async () => {
+          await client.query(
+            "INSERT INTO user_roles (user_id, role_id, site_id) VALUES (99, 1, NULL)"
+          );
+        })
+      ).resolves.not.toThrow();
+    });
+
+    it("user_roles: UPDATE for mismatched site affects zero rows", async () => {
+      const updated = await withSite("site-a", async () => {
+        const result = await client.query(
+          "UPDATE user_roles SET role_id = 99 WHERE site_id = 'site-b'"
+        );
+        return result.rowCount;
+      });
+      expect(updated).toBe(0);
+    });
+
+    it("audit_logs: site-a sees site-a rows AND global rows", async () => {
+      const rows = await withSite("site-a", async () => {
+        const result = await client.query("SELECT * FROM audit_logs ORDER BY id");
+        return result.rows;
+      });
+      expect(rows.length).toBe(2);
+      const siteIds = rows.map((r) => r.site_id);
+      expect(siteIds).toContain("site-a");
+      expect(siteIds).toContain(null);
+    });
+
+    it("audit_logs: INSERT with NULL site_id is allowed (global event)", async () => {
+      await expect(
+        withSite("site-a", async () => {
+          await client.query(
+            "INSERT INTO audit_logs (event_type, site_id, action) VALUES ('test', NULL, 'create')"
+          );
+        })
+      ).resolves.not.toThrow();
+    });
+
+    it("audit_logs: INSERT with mismatched non-null site_id is rejected", async () => {
+      await expect(
+        withSite("site-a", async () => {
+          await client.query(
+            "INSERT INTO audit_logs (event_type, site_id, action) VALUES ('test', 'site-b', 'create')"
+          );
+        })
+      ).rejects.toThrow(/row-level security/i);
     });
   }
 );

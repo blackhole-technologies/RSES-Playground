@@ -28,6 +28,11 @@ import {
   siteRoleAssignments,
   siteAnalytics,
 } from "@shared/multisite-schema";
+import {
+  userRoles,
+  userPermissions,
+  auditLogs,
+} from "@shared/rbac-schema";
 import { registerMultiTenantTable } from "./tenant-scoped";
 
 /**
@@ -64,5 +69,11 @@ export function registerMultiTenantTables(): number {
   registerMultiTenantTable(domains, domains.siteId);
   registerMultiTenantTable(siteRoleAssignments, siteRoleAssignments.siteId);
   registerMultiTenantTable(siteAnalytics, siteAnalytics.siteId);
-  return 9;
+  // M1.8d — rbac-schema tables. All three have NULLABLE site_id
+  // ("null means global"). Policy uses the 0005 disjunctive INSERT
+  // form: WITH CHECK (site_id IS NULL OR site_id = session_var).
+  registerMultiTenantTable(userRoles, userRoles.siteId);
+  registerMultiTenantTable(userPermissions, userPermissions.siteId);
+  registerMultiTenantTable(auditLogs, auditLogs.siteId);
+  return 12;
 }

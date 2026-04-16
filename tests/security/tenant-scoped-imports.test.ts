@@ -50,6 +50,9 @@ const MULTI_TENANT_TABLE_NAMES = [
   "domains",
   "siteRoleAssignments",
   "siteAnalytics",
+  "userRoles",
+  "userPermissions",
+  "auditLogs",
 ] as const;
 
 /**
@@ -98,6 +101,11 @@ const ALLOWED_UNSCOPED_FILES = new Set([
   // in M1.8c-follow; the dev-query guard enforces the gap signal.
   "server/services/adapters/domain-registry.ts",
   "server/services/adapters/network-db.ts",
+  // rbac-service and audit-service import user_roles, user_permissions,
+  // audit_logs. Both are core infrastructure services; by-id methods
+  // need siteId threading in M1.8d-follow.
+  "server/services/rbac/rbac-service.ts",
+  "server/services/audit/audit-service.ts",
   // Schema definition files declare the tables.
   "shared/schema.ts",
   // Tests need to be able to assert behavior directly.
