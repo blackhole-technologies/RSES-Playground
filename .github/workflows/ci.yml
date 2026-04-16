@@ -55,6 +55,38 @@ jobs:
       - name: Typecheck
         run: npm run check
 
+  # Coverage gate (added 2026-04-16, ROADMAP M1.7-CI).
+  # Runs vitest with v8 coverage on server/lib, server/auth, server/middleware.
+  # 70% line threshold — if any of those directories drops below 70% coverage
+  # the job fails. HTML report is uploaded as a CI artifact for inspection.
+  coverage:
+    name: Coverage (server/lib|auth|middleware)
+    needs: [security-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests with coverage
+        run: npm run test:coverage
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 14
+
   # Full build + test (existing job). Depends on security-tests so a
   # security failure shortcircuits the build and saves CI minutes.
   build-and-test:
