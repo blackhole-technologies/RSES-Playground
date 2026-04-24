@@ -4,8 +4,7 @@ A self-hosted multi-user RSS-aggregating CMS.
 
 ## Structure
 
-- `loom/` — the application. Start here.
-- `salvage/` — 13 extracted library units, self-contained, 460 tests passing.
+- `loom/` — the application. Start here. Includes `loom/vendor/` with the 13 library units it depends on.
 - `cms-spec/` — design documents for what loom is building.
 - `archive/parent-2026-04/` — a previous scaffold kept for historical reference. Not maintained.
 
