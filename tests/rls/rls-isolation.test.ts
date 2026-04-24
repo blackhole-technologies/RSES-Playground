@@ -134,10 +134,11 @@ describe.skipIf(!CONNECTION_URL)(
       `);
       // M1.8b — the three social_media tables. Minimal columns
       // covering site_id plus the business keys the assertions
-      // touch. socialPublishQueue and socialPostAnalytics are NOT
-      // created — they have no direct site_id column and are a
-      // known M1.8b gap (documented in migration 0008 and STATUS
-      // v11).
+      // touch. M1.8e (below) adds social_publish_queue and
+      // social_post_analytics, which have no direct site_id column
+      // and scope transitively via post_id → social_posts.site_id
+      // (migration 0011). Those two tables are created after the
+      // three direct-siteId tables so their FK references resolve.
       await client.query(`
         CREATE TABLE social_accounts (
           id text PRIMARY KEY,
@@ -160,6 +161,24 @@ describe.skipIf(!CONNECTION_URL)(
           site_id text NOT NULL,
           name text NOT NULL,
           status text NOT NULL
+        );
+      `);
+      // M1.8e — transitive-scoped tables. post_id FK to social_posts
+      // provides the tenant resolution path; no direct site_id column.
+      // Migration 0011 uses EXISTS subqueries to resolve tenancy.
+      await client.query(`
+        CREATE TABLE social_publish_queue (
+          id text PRIMARY KEY,
+          post_id text NOT NULL REFERENCES social_posts(id) ON DELETE CASCADE,
+          platform text NOT NULL,
+          status text NOT NULL
+        );
+      `);
+      await client.query(`
+        CREATE TABLE social_post_analytics (
+          id text PRIMARY KEY,
+          post_id text NOT NULL REFERENCES social_posts(id) ON DELETE CASCADE,
+          impressions integer NOT NULL DEFAULT 0
         );
       `);
 
@@ -225,6 +244,19 @@ describe.skipIf(!CONNECTION_URL)(
         INSERT INTO social_campaigns (id, site_id, name, status) VALUES
           ('sc-a1', 'site-a', 'launch-a', 'active'),
           ('sc-b1', 'site-b', 'launch-b', 'draft');
+      `);
+      // M1.8e seed — one queue job and one analytics row per site,
+      // each referencing the already-seeded social_posts rows
+      // (sp-a1 for site-a, sp-b1 for site-b).
+      await client.query(`
+        INSERT INTO social_publish_queue (id, post_id, platform, status) VALUES
+          ('pq-a1', 'sp-a1', 'twitter', 'pending'),
+          ('pq-b1', 'sp-b1', 'twitter', 'pending');
+      `);
+      await client.query(`
+        INSERT INTO social_post_analytics (id, post_id, impressions) VALUES
+          ('pa-a1', 'sp-a1', 100),
+          ('pa-b1', 'sp-b1', 200);
       `);
       await client.query(`
         INSERT INTO domains (id, site_id, domain) VALUES
@@ -508,6 +540,93 @@ describe.skipIf(!CONNECTION_URL)(
           FOR UPDATE
           USING (site_id = current_setting('app.current_site_id', true))
           WITH CHECK (site_id = current_setting('app.current_site_id', true));
+      `);
+
+      // M1.8e — transitive RLS policies from migration 0011. Strict
+      // subquery-based USING/WITH CHECK on all four commands, plus
+      // an additive PERMISSIVE SELECT policy gated on a dedicated
+      // worker session variable. The bypass is SELECT-only; writes
+      // remain strictly gated on the site currently bound.
+      //
+      // The inner subquery SELECTs social_posts, which has FORCE
+      // RLS. Under FORCE, the subquery itself is subject to RLS,
+      // so the tenant resolution composes: a queue row is visible
+      // only when its parent post is also visible to the current
+      // session — the exact invariant migration 0011 is intended
+      // to enforce.
+      await client.query(`
+        ALTER TABLE social_publish_queue ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE social_publish_queue FORCE ROW LEVEL SECURITY;
+
+        CREATE POLICY publish_queue_isolation_select ON social_publish_queue
+          FOR SELECT USING (
+            EXISTS (SELECT 1 FROM social_posts sp
+              WHERE sp.id = social_publish_queue.post_id
+                AND sp.site_id = current_setting('app.current_site_id', true))
+          );
+        CREATE POLICY publish_queue_worker_bypass ON social_publish_queue
+          FOR SELECT USING (current_setting('app.publish_queue_worker', true) = 'true');
+        CREATE POLICY publish_queue_isolation_insert ON social_publish_queue
+          FOR INSERT WITH CHECK (
+            EXISTS (SELECT 1 FROM social_posts sp
+              WHERE sp.id = social_publish_queue.post_id
+                AND sp.site_id = current_setting('app.current_site_id', true))
+          );
+        CREATE POLICY publish_queue_isolation_update ON social_publish_queue
+          FOR UPDATE
+          USING (
+            EXISTS (SELECT 1 FROM social_posts sp
+              WHERE sp.id = social_publish_queue.post_id
+                AND sp.site_id = current_setting('app.current_site_id', true))
+          )
+          WITH CHECK (
+            EXISTS (SELECT 1 FROM social_posts sp
+              WHERE sp.id = social_publish_queue.post_id
+                AND sp.site_id = current_setting('app.current_site_id', true))
+          );
+        CREATE POLICY publish_queue_isolation_delete ON social_publish_queue
+          FOR DELETE USING (
+            EXISTS (SELECT 1 FROM social_posts sp
+              WHERE sp.id = social_publish_queue.post_id
+                AND sp.site_id = current_setting('app.current_site_id', true))
+          );
+      `);
+      await client.query(`
+        ALTER TABLE social_post_analytics ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE social_post_analytics FORCE ROW LEVEL SECURITY;
+
+        CREATE POLICY post_analytics_isolation_select ON social_post_analytics
+          FOR SELECT USING (
+            EXISTS (SELECT 1 FROM social_posts sp
+              WHERE sp.id = social_post_analytics.post_id
+                AND sp.site_id = current_setting('app.current_site_id', true))
+          );
+        CREATE POLICY post_analytics_collector_bypass ON social_post_analytics
+          FOR SELECT USING (current_setting('app.analytics_collector', true) = 'true');
+        CREATE POLICY post_analytics_isolation_insert ON social_post_analytics
+          FOR INSERT WITH CHECK (
+            EXISTS (SELECT 1 FROM social_posts sp
+              WHERE sp.id = social_post_analytics.post_id
+                AND sp.site_id = current_setting('app.current_site_id', true))
+          );
+        CREATE POLICY post_analytics_isolation_update ON social_post_analytics
+          FOR UPDATE
+          USING (
+            EXISTS (SELECT 1 FROM social_posts sp
+              WHERE sp.id = social_post_analytics.post_id
+                AND sp.site_id = current_setting('app.current_site_id', true))
+          )
+          WITH CHECK (
+            EXISTS (SELECT 1 FROM social_posts sp
+              WHERE sp.id = social_post_analytics.post_id
+                AND sp.site_id = current_setting('app.current_site_id', true))
+          );
+        CREATE POLICY post_analytics_isolation_delete ON social_post_analytics
+          FOR DELETE USING (
+            EXISTS (SELECT 1 FROM social_posts sp
+              WHERE sp.id = social_post_analytics.post_id
+                AND sp.site_id = current_setting('app.current_site_id', true))
+          );
       `);
     }, 30000);
 
@@ -1167,6 +1286,138 @@ describe.skipIf(!CONNECTION_URL)(
           );
         })
       ).rejects.toThrow(/row-level security/i);
+    });
+
+    // =========================================================================
+    // social_publish_queue / social_post_analytics — M1.8e transitive RLS (migration 0011)
+    //
+    // These tables have no direct site_id. Their tenancy is resolved by
+    // an EXISTS subquery into social_posts via post_id. A worker bypass
+    // policy (SELECT-only, dedicated session variable) allows the
+    // cross-site background workers to list jobs / analytics without
+    // forcing a per-site fanout refactor as a prerequisite.
+    //
+    // The assertions below enforce three critical invariants:
+    //   1. App paths (withSite, no bypass) see only their own site.
+    //   2. Worker bypass widens SELECT but NOT writes.
+    //   3. Each table has its own bypass variable — the bypass on one
+    //      table must not grant access to the other.
+    // =========================================================================
+
+    it("social_publish_queue: site-a sees only site-a jobs", async () => {
+      const rows = await withSite("site-a", async () => {
+        const result = await client.query(
+          "SELECT id FROM social_publish_queue ORDER BY id"
+        );
+        return result.rows;
+      });
+      expect(rows.length).toBe(1);
+      expect(rows[0].id).toBe("pq-a1");
+    });
+
+    it("social_publish_queue: no session vars set returns zero rows (fail-closed)", async () => {
+      const rows = await withSite(null, async () => {
+        const result = await client.query("SELECT * FROM social_publish_queue");
+        return result.rows;
+      });
+      expect(rows.length).toBe(0);
+    });
+
+    it("social_publish_queue: worker bypass flag returns all rows regardless of site binding", async () => {
+      // Set ONLY the bypass flag, no app.current_site_id. Proves the
+      // permissive SELECT policy activates end-to-end and provides
+      // the cross-site read the background worker needs.
+      await client.query("BEGIN");
+      try {
+        await client.query(
+          "SELECT set_config('app.publish_queue_worker', 'true', true)"
+        );
+        const result = await client.query(
+          "SELECT id FROM social_publish_queue ORDER BY id"
+        );
+        expect(result.rows.map((r) => r.id)).toEqual(["pq-a1", "pq-b1"]);
+      } finally {
+        await client.query("ROLLBACK");
+      }
+    });
+
+    it("social_publish_queue: INSERT referencing a cross-tenant post is rejected", async () => {
+      await expect(
+        withSite("site-a", async () => {
+          await client.query(
+            "INSERT INTO social_publish_queue (id, post_id, platform, status) " +
+              "VALUES ('pq-x', 'sp-b1', 'twitter', 'pending')"
+          );
+        })
+      ).rejects.toThrow(/row-level security/i);
+    });
+
+    it("social_publish_queue: INSERT with worker bypass set is STILL rejected for cross-tenant post (bypass is SELECT-only)", async () => {
+      // Load-bearing invariant for the bypass design: setting the
+      // worker flag must not smuggle a cross-tenant write past the
+      // strict INSERT WITH CHECK.
+      await client.query("BEGIN");
+      try {
+        await client.query(
+          "SELECT set_config('app.publish_queue_worker', 'true', true)"
+        );
+        await client.query(
+          "SELECT set_config('app.current_site_id', 'site-a', true)"
+        );
+        await expect(
+          client.query(
+            "INSERT INTO social_publish_queue (id, post_id, platform, status) " +
+              "VALUES ('pq-x', 'sp-b1', 'twitter', 'pending')"
+          )
+        ).rejects.toThrow(/row-level security/i);
+      } finally {
+        await client.query("ROLLBACK");
+      }
+    });
+
+    it("social_post_analytics: site-b sees only site-b rows", async () => {
+      const rows = await withSite("site-b", async () => {
+        const result = await client.query(
+          "SELECT id FROM social_post_analytics ORDER BY id"
+        );
+        return result.rows;
+      });
+      expect(rows.length).toBe(1);
+      expect(rows[0].id).toBe("pa-b1");
+    });
+
+    it("social_post_analytics: collector bypass flag returns all rows", async () => {
+      await client.query("BEGIN");
+      try {
+        await client.query(
+          "SELECT set_config('app.analytics_collector', 'true', true)"
+        );
+        const result = await client.query(
+          "SELECT id FROM social_post_analytics ORDER BY id"
+        );
+        expect(result.rows.map((r) => r.id)).toEqual(["pa-a1", "pa-b1"]);
+      } finally {
+        await client.query("ROLLBACK");
+      }
+    });
+
+    it("social_post_analytics: publish_queue_worker bypass does NOT grant analytics access", async () => {
+      // Each transitive table has its own bypass variable. Setting
+      // the publish queue bypass must not open the analytics table.
+      // This guarantees any future removal of one bypass does not
+      // accidentally affect the other.
+      await client.query("BEGIN");
+      try {
+        await client.query(
+          "SELECT set_config('app.publish_queue_worker', 'true', true)"
+        );
+        const result = await client.query(
+          "SELECT * FROM social_post_analytics"
+        );
+        expect(result.rows.length).toBe(0);
+      } finally {
+        await client.query("ROLLBACK");
+      }
     });
   }
 );

@@ -40,13 +40,19 @@ import { registerMultiTenantTable } from "./tenant-scoped";
  * tables for logging/health-check purposes.
  *
  * Registration history (newest first):
+ *   - 2026-04-17 (M1.8e): transitively-scoped tables — `socialPublishQueue`
+ *     and `socialPostAnalytics`. Neither has a direct site_id column; tenancy
+ *     is resolved through an EXISTS subquery to social_posts via post_id. These
+ *     are NOT added to `registerMultiTenantTable()` because the helper's API
+ *     assumes a direct siteId column — the direct-siteId helper would throw
+ *     at `siteIdColumnFor()`. Their Layer-3 protection lives entirely in
+ *     migration 0011; Layer-2 service-code discipline is enforced by a
+ *     combination of (a) the existing pattern in pg-storage.ts (`getTopPerforming`
+ *     uses `withDbSiteScope` + explicit JOIN to social_posts), and (b) worker
+ *     bypass helpers added in M1.8e-follow (not yet shipped — see the apply
+ *     prerequisite banner at the top of migration 0011).
  *   - 2026-04-15 (M1.8b): socialAccounts, socialPosts, socialCampaigns —
- *     site_id NOT NULL on all three. The `socialPublishQueue` and
- *     `socialPostAnalytics` tables from the same schema file do NOT have
- *     a direct site_id column and are transitively scoped via foreign
- *     keys to socialPosts / socialAccounts; they are a known M1.8b gap
- *     and will need either a schema change (denormalize site_id) or a
- *     policy that uses a subquery in a future sub-milestone.
+ *     site_id NOT NULL on all three.
  *   - 2026-04-15 (M1.8a): apiKeys — site_id NOT NULL; validateKey path is
  *     resolved via the `app.api_key_lookup` bypass flag and migration 0007.
  *     See `server/services/api-keys/api-key-service.ts:validateKey`.
