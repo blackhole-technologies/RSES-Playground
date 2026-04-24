@@ -10,7 +10,9 @@
     "dev": "tsx watch server.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "db:migrate": "tsx bin/migrate.ts",
+    "db:reset": "tsx bin/reset-db.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.36.0",
