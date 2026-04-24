@@ -33,6 +33,19 @@ export async function bootstrap(): Promise<BootstrapResult> {
   );
 
   const db = createDbHandle(config);
+
+  // Ping the database at boot. A misconfigured DATABASE_URL should fail
+  // loudly here rather than on the first request. The circuit breaker
+  // wraps production queries, but the sanity check runs raw so the error
+  // bubbles up untransformed.
+  try {
+    await db.pool.query("SELECT 1");
+    log.info("Database reachable");
+  } catch (err) {
+    log.fatal({ err }, "Database unreachable at boot — check DATABASE_URL");
+    throw err;
+  }
+
   const events = createEventBus();
   const hooks = createHookRegistry();
 

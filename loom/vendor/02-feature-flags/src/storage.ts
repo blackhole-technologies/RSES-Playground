@@ -9,7 +9,7 @@
  * Can be extended to use PostgreSQL via Drizzle.
  */
 
-import { v4 as uuidv4 } from "uuid";
+import { randomUUID } from "node:crypto";
 import type {
   FeatureFlag,
   SiteFeatureOverride,
@@ -763,7 +763,7 @@ export class InMemoryRolloutHistoryStorage implements IRolloutHistoryStorage {
   async record(event: Omit<RolloutEvent, "id" | "timestamp">): Promise<RolloutEvent> {
     const full: RolloutEvent = {
       ...event,
-      id: uuidv4(),
+      id: randomUUID(),
       timestamp: new Date().toISOString(),
     };
 
