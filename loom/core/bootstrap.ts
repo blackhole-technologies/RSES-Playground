@@ -20,6 +20,7 @@ import { createAuthMiddleware } from "../modules/auth/middleware";
 import { createAuthRouter } from "../modules/auth/routes";
 import { createSetupRouter } from "../modules/auth/setup-routes";
 import { createLoginRateLimiter } from "../modules/auth/rate-limit";
+import { createAdminRouter } from "../modules/admin/routes";
 
 export interface App {
   express: Express;
@@ -125,6 +126,7 @@ export async function bootstrap(): Promise<BootstrapResult> {
     "/setup",
     createSetupRouter(db, { cookieName, cookieSecure }),
   );
+  expressApp.use("/api/admin", createAdminRouter(db));
 
   const server = expressApp.listen(config.port, () => {
     log.info(

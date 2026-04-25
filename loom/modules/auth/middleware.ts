@@ -107,6 +107,28 @@ export const requireAuth: RequestHandler = (req, res, next) => {
 };
 
 /**
+ * Refuse the request unless `req.user` is set AND `req.user.isAdmin`
+ * is true. Mount with requireAuth — the order matters because we
+ * answer 401 before 403 for unauthenticated requests, so callers can
+ * distinguish "log in" from "log in as someone with permission".
+ *
+ * The 401 fallback is defense in depth: if a route is misconfigured
+ * with [requireAdmin] and no preceding requireAuth, this still does
+ * the right thing rather than crashing on req.user!.isAdmin.
+ */
+export const requireAdmin: RequestHandler = (req, res, next) => {
+  if (!req.user) {
+    res.status(401).json({ error: "unauthenticated" });
+    return;
+  }
+  if (!req.user.isAdmin) {
+    res.status(403).json({ error: "forbidden" });
+    return;
+  }
+  next();
+};
+
+/**
  * Parse a `Cookie:` header into a name → value map. Handles whitespace
  * and quoted values. Does not validate cookie names; junk entries get
  * stored as-is rather than throwing — a malformed cookie should not
