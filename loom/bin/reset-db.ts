@@ -31,7 +31,11 @@ async function main() {
 
   const runner = createMigrationRunner({
     databaseUrl: config.databaseUrl,
-    directories: ["core/migrations", "modules/*/migrations"],
+    directories: [
+      "core/migrations",
+      "engines/*/migrations",
+      "modules/*/migrations",
+    ],
   });
   try {
     const applied = await runner.up();
