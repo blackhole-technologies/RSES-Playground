@@ -26,9 +26,27 @@
 
 import crypto from "node:crypto";
 import { z } from "zod";
-import { hashPassword } from "../../vendor/13-password-hash/src/password-hash";
+import {
+  hashPassword,
+  verifyPassword,
+} from "../../vendor/13-password-hash/src/password-hash";
 import type { DbHandle } from "../../core/db";
 import type { User } from "./schema";
+
+/**
+ * Common SELECT clause for users — keeps column-name aliasing in one
+ * place so RETURNING/SELECT shapes stay consistent across functions.
+ * password_hash is included; callers that return Users to the caller
+ * (`/api/me`, login responses) must strip it via `toSafeUser`.
+ */
+const USER_COLUMNS = `
+  id, username, email, password_hash AS "passwordHash",
+  display_name AS "displayName", is_admin AS "isAdmin",
+  profile_public AS "profilePublic",
+  invite_code_used AS "inviteCodeUsed",
+  created_at AS "createdAt",
+  last_login_at AS "lastLoginAt", disabled
+`;
 
 // ── Bootstrap token ───────────────────────────────────────────────────────
 
@@ -212,12 +230,7 @@ export async function consumeBootstrapToken(
     const userRes = await client.query<User>(
       `INSERT INTO users (username, email, password_hash, display_name, is_admin)
        VALUES ($1, $2, $3, $4, TRUE)
-       RETURNING id, username, email, password_hash AS "passwordHash",
-                 display_name AS "displayName", is_admin AS "isAdmin",
-                 profile_public AS "profilePublic",
-                 invite_code_used AS "inviteCodeUsed",
-                 created_at AS "createdAt",
-                 last_login_at AS "lastLoginAt", disabled`,
+       RETURNING ${USER_COLUMNS}`,
       [
         validated.username,
         validated.email ?? null,
@@ -243,4 +256,139 @@ export async function consumeBootstrapToken(
   } finally {
     client.release();
   }
+}
+
+// ── User registration & credential verification ───────────────────────────
+
+/**
+ * Thrown when registerUser detects a username that case-folds to an
+ * existing one. Mapped to HTTP 409 by the registration route.
+ */
+export class UsernameTakenError extends Error {
+  constructor(public readonly username: string) {
+    super(`username already taken: ${username}`);
+    this.name = "UsernameTakenError";
+  }
+}
+
+/**
+ * Thrown when registerUser detects an email that case-folds to an
+ * existing one (only fires when the input email is non-null).
+ */
+export class EmailTakenError extends Error {
+  constructor(public readonly email: string) {
+    super(`email already taken: ${email}`);
+    this.name = "EmailTakenError";
+  }
+}
+
+/**
+ * Input shape for `registerUser`. `inviteCodeUsed` is filled in by the
+ * route after it has separately validated and consumed the invite_codes
+ * row — registerUser itself does not touch invite_codes (that's the
+ * route's orchestration concern).
+ */
+export const RegisterUserInputSchema = z.object({
+  username: z
+    .string()
+    .regex(USERNAME_REGEX, "username must be 3–32 chars of [a-zA-Z0-9_-]"),
+  password: z.string().min(8, "password must be at least 8 characters"),
+  email: z.string().email().optional(),
+  displayName: z.string().min(1).max(64).optional(),
+  inviteCodeUsed: z.string().optional(),
+});
+export type RegisterUserInput = z.infer<typeof RegisterUserInputSchema>;
+
+/**
+ * Create a non-admin user. Always inserts with `is_admin = FALSE` —
+ * admin elevation is a separate concern (bootstrap flow, future admin
+ * action). Caller is responsible for enforcing `system_settings
+ * .registration_mode` (`disabled` / `invite` / `open`) before calling.
+ *
+ * Throws `ZodError` on invalid input, `UsernameTakenError` /
+ * `EmailTakenError` on case-insensitive uniqueness collision, or
+ * propagates other DB errors. Returns the new User on success.
+ */
+export async function registerUser(
+  handle: DbHandle,
+  input: RegisterUserInput,
+): Promise<User> {
+  const validated = RegisterUserInputSchema.parse(input);
+  const passwordHash = await hashPassword(validated.password);
+
+  try {
+    const res = await handle.pool.query<User>(
+      `INSERT INTO users (username, email, password_hash, display_name, invite_code_used)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING ${USER_COLUMNS}`,
+      [
+        validated.username,
+        validated.email ?? null,
+        passwordHash,
+        validated.displayName ?? null,
+        validated.inviteCodeUsed ?? null,
+      ],
+    );
+    return res.rows[0];
+  } catch (err) {
+    // Map Postgres unique-violation errors to typed exceptions so the
+    // route can return 409 without parsing error strings itself. The
+    // index names come from 0001_auth_init.sql.
+    if (err instanceof Error) {
+      if (/users_username_lower_idx/.test(err.message)) {
+        throw new UsernameTakenError(validated.username);
+      }
+      if (/users_email_lower_idx/.test(err.message)) {
+        // email is guaranteed non-null at this point because the unique
+        // index is partial (WHERE email IS NOT NULL).
+        throw new EmailTakenError(validated.email!);
+      }
+    }
+    throw err;
+  }
+}
+
+/**
+ * Verify a `(username, password)` pair against the users table.
+ *
+ * Returns the matching User on success, `null` on any failure mode:
+ * unknown username, wrong password, or disabled account. A single null
+ * return type collapses these into one anti-enumeration response so
+ * callers can answer 401 without leaking which condition failed (SPEC
+ * §5.3).
+ *
+ * Username lookup is case-insensitive via the functional unique index
+ * (`WHERE lower(username) = lower($1)`) — matches the case-fold
+ * uniqueness contract from registration.
+ *
+ * Note on timing: when the username does not exist this function
+ * returns without invoking scrypt, which is faster than the
+ * password-verifying path. An attacker measuring response time could
+ * distinguish "user exists but wrong password" from "user does not
+ * exist". This is mitigated in practice by the per-username login rate
+ * limit (5 failures / 15 minutes per SPEC §5.3) which lands in a later
+ * commit; until then the timing leak is documented but not closed.
+ */
+export async function verifyCredentials(
+  handle: DbHandle,
+  username: string,
+  password: string,
+): Promise<User | null> {
+  const res = await handle.pool.query<User>(
+    `SELECT ${USER_COLUMNS} FROM users
+     WHERE lower(username) = lower($1)`,
+    [username],
+  );
+  if (res.rows.length === 0) return null;
+  const user = res.rows[0];
+
+  // Disabled accounts cannot log in. Returning null (instead of a typed
+  // "disabled" error) preserves anti-enumeration: an attacker with a
+  // stolen-but-disabled username sees identical behavior to a wrong
+  // password.
+  if (user.disabled) return null;
+
+  const ok = await verifyPassword(password, user.passwordHash);
+  if (!ok) return null;
+  return user;
 }
