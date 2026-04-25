@@ -31,22 +31,33 @@ import {
   verifyPassword,
 } from "../../vendor/13-password-hash/src/password-hash";
 import type { DbHandle } from "../../core/db";
-import type { User } from "./schema";
+import type { Session, User } from "./schema";
 
 /**
- * Common SELECT clause for users — keeps column-name aliasing in one
- * place so RETURNING/SELECT shapes stay consistent across functions.
- * password_hash is included; callers that return Users to the caller
- * (`/api/me`, login responses) must strip it via `toSafeUser`.
+ * Builds the SELECT/RETURNING clause for users with optional table-alias
+ * prefixing. Keeps column-name aliasing in one place so query shapes
+ * stay consistent across functions. Pass `alias` ("u", "users") for
+ * queries that JOIN — bare columns are ambiguous in JOIN contexts since
+ * `sessions.id` and `users.id` collide. Use `userColumns()` (no alias)
+ * for INSERT…RETURNING and single-table SELECTs.
+ *
+ * password_hash is included; callers that send Users back to the
+ * client (`/api/me`, login responses) must strip it via `toSafeUser`.
  */
-const USER_COLUMNS = `
-  id, username, email, password_hash AS "passwordHash",
-  display_name AS "displayName", is_admin AS "isAdmin",
-  profile_public AS "profilePublic",
-  invite_code_used AS "inviteCodeUsed",
-  created_at AS "createdAt",
-  last_login_at AS "lastLoginAt", disabled
-`;
+function userColumns(alias = ""): string {
+  const p = alias ? `${alias}.` : "";
+  return `
+    ${p}id, ${p}username, ${p}email,
+    ${p}password_hash AS "passwordHash",
+    ${p}display_name AS "displayName",
+    ${p}is_admin AS "isAdmin",
+    ${p}profile_public AS "profilePublic",
+    ${p}invite_code_used AS "inviteCodeUsed",
+    ${p}created_at AS "createdAt",
+    ${p}last_login_at AS "lastLoginAt",
+    ${p}disabled
+  `;
+}
 
 // ── Bootstrap token ───────────────────────────────────────────────────────
 
@@ -230,7 +241,7 @@ export async function consumeBootstrapToken(
     const userRes = await client.query<User>(
       `INSERT INTO users (username, email, password_hash, display_name, is_admin)
        VALUES ($1, $2, $3, $4, TRUE)
-       RETURNING ${USER_COLUMNS}`,
+       RETURNING ${userColumns()}`,
       [
         validated.username,
         validated.email ?? null,
@@ -320,7 +331,7 @@ export async function registerUser(
     const res = await handle.pool.query<User>(
       `INSERT INTO users (username, email, password_hash, display_name, invite_code_used)
        VALUES ($1, $2, $3, $4, $5)
-       RETURNING ${USER_COLUMNS}`,
+       RETURNING ${userColumns()}`,
       [
         validated.username,
         validated.email ?? null,
@@ -375,7 +386,7 @@ export async function verifyCredentials(
   password: string,
 ): Promise<User | null> {
   const res = await handle.pool.query<User>(
-    `SELECT ${USER_COLUMNS} FROM users
+    `SELECT ${userColumns()} FROM users
      WHERE lower(username) = lower($1)`,
     [username],
   );
@@ -391,4 +402,162 @@ export async function verifyCredentials(
   const ok = await verifyPassword(password, user.passwordHash);
   if (!ok) return null;
   return user;
+}
+
+// ── Session lifecycle ─────────────────────────────────────────────────────
+
+/**
+ * Number of random bytes for session cookie tokens. 32 bytes = 256 bits
+ * of entropy, base64url-encoded into a 43-char URL-safe string. Long
+ * enough that brute-force is intractable; short enough that the cookie
+ * fits comfortably under any header-size limit.
+ */
+const SESSION_COOKIE_BYTES = 32;
+
+/**
+ * Absolute session lifetime. Per SPEC §5.3: "absolute 90-day cap from
+ * `created_at`". After this, the session is dead regardless of activity.
+ */
+const SESSION_ABSOLUTE_TTL_DAYS = 90;
+
+/**
+ * Sliding inactivity window. Per SPEC §5.3: "sessions expire after 30
+ * days of inactivity". Each request through `loadSessionUser` resets
+ * the clock by bumping `last_active_at`.
+ */
+const SESSION_INACTIVITY_TTL_DAYS = 30;
+
+export interface CreateSessionOptions {
+  /** Caller-captured client IP. Stored verbatim; nullable. */
+  ip?: string;
+  /** Caller-captured User-Agent. Stored verbatim; nullable. */
+  userAgent?: string;
+}
+
+/**
+ * Create a session row for `userId`, generate a random opaque cookie
+ * token, set absolute expiry to `NOW() + 90 days`, and update the
+ * user's `last_login_at` — all in one transaction. Returns the full
+ * Session row including the raw cookie value (caller sets this on the
+ * response cookie).
+ *
+ * Caller is responsible for confirming the user is allowed to log in
+ * (use `verifyCredentials` first); this function does not re-check
+ * `disabled` or password.
+ */
+export async function createSession(
+  handle: DbHandle,
+  userId: string,
+  options: CreateSessionOptions = {},
+): Promise<Session> {
+  const cookie = crypto
+    .randomBytes(SESSION_COOKIE_BYTES)
+    .toString("base64url");
+
+  const client = await handle.pool.connect();
+  try {
+    await client.query("BEGIN");
+    const sessionRes = await client.query<Session>(
+      `INSERT INTO sessions (user_id, cookie, expires_at, ip, user_agent)
+       VALUES (
+         $1, $2,
+         NOW() + ($3::int || ' days')::interval,
+         $4, $5
+       )
+       RETURNING id, user_id AS "userId", cookie,
+                 expires_at AS "expiresAt",
+                 last_active_at AS "lastActiveAt",
+                 created_at AS "createdAt",
+                 ip, user_agent AS "userAgent"`,
+      [
+        userId,
+        cookie,
+        SESSION_ABSOLUTE_TTL_DAYS,
+        options.ip ?? null,
+        options.userAgent ?? null,
+      ],
+    );
+    await client.query(
+      "UPDATE users SET last_login_at = NOW() WHERE id = $1",
+      [userId],
+    );
+    await client.query("COMMIT");
+    return sessionRes.rows[0];
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Resolve a cookie token to the owning User, applying the full
+ * expiration matrix. Returns the User on success, null on any miss:
+ * unknown cookie, absolute expiry passed, inactivity window exceeded,
+ * or disabled user. The four miss modes collapse to a single null
+ * return so the caller (middleware) can answer 401 uniformly.
+ *
+ * Side effect: bumps `last_active_at` to NOW() on a successful lookup.
+ * That's the sliding-expiry mechanism — a request that resolves to a
+ * valid session resets its inactivity clock. A concurrent DELETE
+ * between the SELECT and UPDATE is benign (the UPDATE just touches
+ * zero rows; the User has already been resolved).
+ */
+export async function loadSessionUser(
+  handle: DbHandle,
+  cookie: string,
+): Promise<User | null> {
+  const res = await handle.pool.query<User>(
+    `SELECT ${userColumns("u")}
+     FROM sessions s
+       JOIN users u ON u.id = s.user_id
+     WHERE s.cookie = $1
+       AND s.expires_at > NOW()
+       AND s.last_active_at > NOW() - ($2::int || ' days')::interval
+       AND NOT u.disabled`,
+    [cookie, SESSION_INACTIVITY_TTL_DAYS],
+  );
+  if (res.rows.length === 0) return null;
+
+  await handle.pool.query(
+    "UPDATE sessions SET last_active_at = NOW() WHERE cookie = $1",
+    [cookie],
+  );
+  return res.rows[0];
+}
+
+/**
+ * Delete the session row identified by `cookie`. Returns true if a row
+ * was deleted, false otherwise. Idempotent — calling twice with the
+ * same cookie returns true once and false once.
+ *
+ * Used by `POST /api/auth/logout`. Distinct from `expireSessions`,
+ * which is the bulk cleanup path.
+ */
+export async function deleteSession(
+  handle: DbHandle,
+  cookie: string,
+): Promise<boolean> {
+  const res = await handle.pool.query(
+    "DELETE FROM sessions WHERE cookie = $1",
+    [cookie],
+  );
+  return (res.rowCount ?? 0) > 0;
+}
+
+/**
+ * Bulk-delete sessions that have hit their absolute expiry OR exceeded
+ * the inactivity window. Returns the number of rows removed. Designed
+ * to be called periodically by a scheduled job — running it on every
+ * request would be wasteful.
+ */
+export async function expireSessions(handle: DbHandle): Promise<number> {
+  const res = await handle.pool.query(
+    `DELETE FROM sessions
+     WHERE expires_at <= NOW()
+        OR last_active_at <= NOW() - ($1::int || ' days')::interval`,
+    [SESSION_INACTIVITY_TTL_DAYS],
+  );
+  return res.rowCount ?? 0;
 }
