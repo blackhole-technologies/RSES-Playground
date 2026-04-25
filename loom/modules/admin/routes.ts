@@ -17,9 +17,40 @@ import {
   getSettings,
   updateSettings,
 } from "./service";
+import { createDrizzleFeatureFlagStorage } from "../../engines/feature-flags/storage";
+import type { FeatureFlag } from "../../vendor/02-feature-flags/src/shared-types";
 import type { DbHandle } from "../../core/db";
 
+/**
+ * PATCH /flags/:key body. Mirror of the subset of vendor's
+ * FeatureFlag fields admins can edit. Loose validation on the JSONB
+ * blobs (percentageRollout / targetingRules / dependencies) — vendor's
+ * evaluator normalizes them at read time, so junk entries surface as
+ * runtime errors rather than DB corruption. Tighten when admin UI
+ * grows form-side editors that need stronger feedback.
+ */
+const UpdateFlagInputSchema = z
+  .object({
+    name: z.string().min(1).optional(),
+    description: z.string().optional(),
+    category: z.string().min(1).optional(),
+    globallyEnabled: z.boolean().optional(),
+    toggleable: z.boolean().optional(),
+    defaultState: z.boolean().optional(),
+    percentageRollout: z.unknown().optional(),
+    targetingRules: z.unknown().optional(),
+    dependencies: z.unknown().optional(),
+    tags: z.array(z.string()).optional(),
+    owner: z.string().optional(),
+    sunsetDate: z.string().optional(),
+  })
+  .refine(
+    (input) => Object.values(input).some((v) => v !== undefined),
+    { message: "at least one field must be provided" },
+  );
+
 export function createAdminRouter(handle: DbHandle): Router {
+  const flagStorage = createDrizzleFeatureFlagStorage(handle);
   const router = Router();
 
   router.use(requireAuth, requireAdmin);
@@ -45,6 +76,43 @@ export function createAdminRouter(handle: DbHandle): Router {
         });
         return;
       }
+      next(err);
+    }
+  });
+
+  router.get("/flags", async (_req, res, next) => {
+    try {
+      const flags = await flagStorage.getAll();
+      res.json({ flags });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.patch("/flags/:key", async (req, res, next) => {
+    try {
+      const parsed = UpdateFlagInputSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({
+          error: "invalid_request",
+          issues: parsed.error.issues,
+        });
+        return;
+      }
+      // The Zod schema validates shape; the cast lets storage.update
+      // accept the validated object as Partial<FeatureFlag>. Vendor's
+      // unknown-typed JSONB fields make a perfect type alignment hard
+      // here; the validation has already paid the safety cost.
+      const updated = await flagStorage.update(
+        req.params.key,
+        parsed.data as Partial<FeatureFlag>,
+      );
+      if (!updated) {
+        res.status(404).json({ error: "flag_not_found" });
+        return;
+      }
+      res.json(updated);
+    } catch (err) {
       next(err);
     }
   });
