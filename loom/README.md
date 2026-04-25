@@ -4,21 +4,27 @@ The application. A self-hosted multi-user RSS-aggregating CMS built on top of th
 
 ## Run
 
-```
-cp .env.example .env
-# edit DATABASE_URL and SESSION_SECRET
+Local Postgres comes from docker-compose. The first `pnpm db:up` initializes a named volume and seeds two databases — `loom` (dev) and `loom_test` (integration tests) — both reachable on `localhost:5432` as user `postgres`.
 
+```
+pnpm db:up           # starts postgres in background, blocks until healthy
+cp .env.example .env # already targets the docker-compose Postgres
 pnpm install
+pnpm db:migrate      # applies pending migrations to the `loom` DB
 pnpm dev
 ```
 
 Server listens on `PORT` (default 3000). `/health` returns 200 JSON, `/metrics` returns Prometheus text.
 
+Stop the DB with `pnpm db:down`. Data persists in the `loom-postgres-data` volume; remove it with `docker volume rm loom-postgres-data` for a clean slate.
+
+Requires Docker Compose v2.17 or newer (the `--wait` flag landed in 2.17).
+
 ## Test
 
 ```
-pnpm test                                     # unit tests (no DB)
-TEST_DATABASE_URL=postgres://... pnpm test    # unit + integration (with DB)
+pnpm test                  # unit tests only — integration tests skip without DB
+pnpm test:integration      # full suite — requires `pnpm db:up` to be running
 ```
 
 ## Typecheck

@@ -1,0 +1,38 @@
+# Local development Postgres for loom.
+#
+# One service. The named volume persists data across `down`/`up` cycles;
+# remove it with `docker volume rm loom-postgres-data` for a clean slate.
+#
+# The init script in `./scripts/init-test-db.sql` runs ONCE on volume
+# initialization (first boot, or after the volume is removed). It seeds
+# a second database `loom_test` so integration tests have a clean target
+# without trampling dev data in the `loom` database.
+#
+# Credentials are dev-only — never reuse `postgres/postgres` in production.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: loom-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: loom
+    ports:
+      - "5432:5432"
+    volumes:
+      - loom-postgres-data:/var/lib/postgresql/data
+      - ./scripts/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
+    healthcheck:
+      # `pg_isready` returns 0 once Postgres accepts connections. The
+      # `pnpm db:up` script uses `--wait` to block until this passes,
+      # so subsequent commands (db:migrate, test:integration) don't
+      # race the boot.
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+volumes:
+  loom-postgres-data:
+    name: loom-postgres-data

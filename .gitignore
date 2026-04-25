@@ -8,6 +8,7 @@ vite.config.ts.*
 # Environment and local files
 .env
 .env.*
+!.env.example
 .local/
 
 # Editor backup files — these should never be in version control. If you need

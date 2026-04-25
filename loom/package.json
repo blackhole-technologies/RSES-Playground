@@ -7,12 +7,15 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "tsx watch server.ts",
+    "dev": "tsx watch --env-file=.env server.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "db:migrate": "tsx bin/migrate.ts",
-    "db:reset": "tsx bin/reset-db.ts"
+    "test:integration": "TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/loom_test vitest run",
+    "db:up": "docker compose up -d --wait postgres",
+    "db:down": "docker compose down",
+    "db:migrate": "tsx --env-file=.env bin/migrate.ts",
+    "db:reset": "tsx --env-file=.env bin/reset-db.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.36.0",
