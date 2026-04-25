@@ -14,7 +14,10 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireAdmin, requireAuth } from "../auth/middleware";
 import {
+  createInviteCode,
+  deleteInviteCode,
   getSettings,
+  listInviteCodes,
   updateSettings,
 } from "./service";
 import { createDrizzleFeatureFlagStorage } from "../../engines/feature-flags/storage";
@@ -112,6 +115,46 @@ export function createAdminRouter(handle: DbHandle): Router {
         return;
       }
       res.json(updated);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.get("/invite-codes", async (_req, res, next) => {
+    try {
+      const codes = await listInviteCodes(handle);
+      res.json({ inviteCodes: codes });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/invite-codes", async (req, res, next) => {
+    try {
+      // requireAuth guarantees req.user is set; the admin's id is the
+      // creator on record. created_by FK cascades on user delete.
+      const code = await createInviteCode(handle, req.user!.id, req.body);
+      res.status(201).json(code);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        res.status(400).json({
+          error: "invalid_request",
+          issues: err.issues,
+        });
+        return;
+      }
+      next(err);
+    }
+  });
+
+  router.delete("/invite-codes/:code", async (req, res, next) => {
+    try {
+      const removed = await deleteInviteCode(handle, req.params.code);
+      if (!removed) {
+        res.status(404).json({ error: "invite_code_not_found" });
+        return;
+      }
+      res.status(204).end();
     } catch (err) {
       next(err);
     }
