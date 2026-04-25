@@ -180,6 +180,38 @@ export async function createBootstrapToken(
 }
 
 /**
+ * Verify whether `rawToken` matches the unconsumed bootstrap token.
+ * Read-only — never advances `bootstrap_token_consumed_at`. Used by
+ * `GET /setup` to decide whether to render the admin-creation form
+ * (true) or 404 (false). Returns false uniformly for any miss
+ * (system_settings missing, no hash set, already consumed, or hash
+ * mismatch) so the caller can keep its anti-enumeration story.
+ *
+ * Concurrency: between this call and a subsequent POST the consumer
+ * may race. The POST goes through `consumeBootstrapToken`, which
+ * holds a FOR UPDATE lock and checks consumed_at again — a winning
+ * concurrent consume just makes our caller's POST 404 cleanly.
+ */
+export async function verifyBootstrapToken(
+  handle: DbHandle,
+  rawToken: string,
+): Promise<boolean> {
+  const incomingHash = hashToken(rawToken);
+  const res = await handle.pool.query<{
+    bootstrap_token_hash: string | null;
+    bootstrap_token_consumed_at: Date | null;
+  }>(
+    `SELECT bootstrap_token_hash, bootstrap_token_consumed_at
+     FROM system_settings WHERE key = 'default'`,
+  );
+  if (res.rows.length === 0) return false;
+  const { bootstrap_token_hash: storedHash, bootstrap_token_consumed_at: consumedAt } =
+    res.rows[0];
+  if (storedHash === null || consumedAt !== null) return false;
+  return timingSafeEqualHex(incomingHash, storedHash);
+}
+
+/**
  * Consume a raw bootstrap token: validate input, look up the stored
  * hash, compare, create the admin user, and mark consumed — atomically.
  *

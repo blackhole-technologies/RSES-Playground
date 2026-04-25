@@ -147,8 +147,11 @@ function readCookie(
  *   - HttpOnly (no JS access)
  *   - SameSite=Strict (no cross-site sends, even on top-level navs)
  *   - Secure (production only — `__Host-` cookies require it)
+ *
+ * Exported so the /setup flow can set the cookie identically without
+ * duplicating the security-critical flag list.
  */
-function setSessionCookie(
+export function setSessionCookie(
   res: Response,
   cookieName: string,
   cookieValue: string,
@@ -171,7 +174,7 @@ function setSessionCookie(
  * Clear the session cookie. Same flag matrix as set, with Max-Age=0
  * and an empty value — the browser deletes any matching cookie.
  */
-function clearSessionCookie(
+export function clearSessionCookie(
   res: Response,
   cookieName: string,
   secure: boolean,
