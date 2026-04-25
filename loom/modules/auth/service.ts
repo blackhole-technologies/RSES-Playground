@@ -391,6 +391,183 @@ export async function registerUser(
   }
 }
 
+// ── Registration modes (SPEC §5.2) ────────────────────────────────────────
+
+export type RegistrationMode = "disabled" | "invite" | "open";
+
+/**
+ * Thrown when /register is hit while system_settings.registration_mode
+ * is "disabled". Caller maps to HTTP 403 with the SPEC's
+ * `registration_disabled` error code.
+ */
+export class RegistrationDisabledError extends Error {
+  constructor() {
+    super("registration is currently disabled");
+    this.name = "RegistrationDisabledError";
+  }
+}
+
+/**
+ * Thrown when invite-mode registration fails for any code-related
+ * reason: missing, unknown, expired, or already consumed. The error
+ * does NOT distinguish those subcases so an attacker cannot use the
+ * /register route to enumerate valid codes — same anti-enumeration
+ * spirit as /setup's 404.
+ */
+export class InvalidInviteCodeError extends Error {
+  constructor() {
+    super("invalid invite code");
+    this.name = "InvalidInviteCodeError";
+  }
+}
+
+export interface RegisterWithModeInput extends RegisterUserInput {
+  /** Required when registration_mode = "invite"; ignored otherwise. */
+  inviteCode?: string;
+}
+
+/**
+ * Read the current registration mode from system_settings. Throws if
+ * the singleton row is missing (means core_init hasn't run yet —
+ * abnormal in production).
+ */
+export async function getRegistrationMode(
+  handle: DbHandle,
+): Promise<RegistrationMode> {
+  const res = await handle.pool.query<{
+    registration_mode: RegistrationMode;
+  }>(
+    "SELECT registration_mode FROM system_settings WHERE key = 'default'",
+  );
+  if (res.rows.length === 0) {
+    throw new Error(
+      "system_settings row missing — has 0001_core_init.sql been applied?",
+    );
+  }
+  return res.rows[0].registration_mode;
+}
+
+/**
+ * Register a user atomically against an invite code. The invite_codes
+ * row is held under SELECT … FOR UPDATE; the user INSERT and the
+ * UPDATE that marks the code consumed are committed together. Two
+ * concurrent registrations with the same valid code serialize: one
+ * wins, the other observes consumed_by != null and throws
+ * InvalidInviteCodeError (caller maps to 400).
+ */
+export async function registerViaInviteCode(
+  handle: DbHandle,
+  code: string,
+  input: RegisterUserInput,
+): Promise<User> {
+  // Validate first — fail fast before any DB work.
+  const validated = RegisterUserInputSchema.parse({
+    ...input,
+    inviteCodeUsed: code,
+  });
+  const passwordHash = await hashPassword(validated.password);
+
+  const client = await handle.pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const codeRes = await client.query<{
+      consumed_by: string | null;
+      expires_at: Date | null;
+    }>(
+      `SELECT consumed_by, expires_at FROM invite_codes
+       WHERE code = $1 FOR UPDATE`,
+      [code],
+    );
+    if (codeRes.rows.length === 0) {
+      await client.query("ROLLBACK");
+      throw new InvalidInviteCodeError();
+    }
+    const { consumed_by, expires_at } = codeRes.rows[0];
+    if (consumed_by !== null) {
+      await client.query("ROLLBACK");
+      throw new InvalidInviteCodeError();
+    }
+    if (expires_at !== null && expires_at.getTime() <= Date.now()) {
+      await client.query("ROLLBACK");
+      throw new InvalidInviteCodeError();
+    }
+
+    let user: User;
+    try {
+      const userRes = await client.query<User>(
+        `INSERT INTO users (username, email, password_hash, display_name, invite_code_used)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING ${userColumns()}`,
+        [
+          validated.username,
+          validated.email ?? null,
+          passwordHash,
+          validated.displayName ?? null,
+          code,
+        ],
+      );
+      user = userRes.rows[0];
+    } catch (err) {
+      await client.query("ROLLBACK");
+      if (err instanceof Error) {
+        if (/users_username_lower_idx/.test(err.message)) {
+          throw new UsernameTakenError(validated.username);
+        }
+        if (/users_email_lower_idx/.test(err.message)) {
+          throw new EmailTakenError(validated.email!);
+        }
+      }
+      throw err;
+    }
+
+    await client.query(
+      `UPDATE invite_codes
+       SET consumed_by = $1, consumed_at = NOW()
+       WHERE code = $2`,
+      [user.id, code],
+    );
+
+    await client.query("COMMIT");
+    return user;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Top-level registration entrypoint. Reads
+ * system_settings.registration_mode and dispatches:
+ *   - "disabled" → throws RegistrationDisabledError
+ *   - "invite"   → requires inviteCode in input; calls
+ *                  registerViaInviteCode (atomic)
+ *   - "open"     → no code; calls registerUser
+ *
+ * Per-IP rate limiting for the "open" mode (SPEC §5.2: 3/hour) is the
+ * route's responsibility — keeping it out of this service keeps the
+ * function transport-agnostic.
+ */
+export async function registerWithMode(
+  handle: DbHandle,
+  input: RegisterWithModeInput,
+): Promise<User> {
+  const mode = await getRegistrationMode(handle);
+
+  if (mode === "disabled") {
+    throw new RegistrationDisabledError();
+  }
+
+  if (mode === "invite") {
+    if (!input.inviteCode) {
+      throw new InvalidInviteCodeError();
+    }
+    return registerViaInviteCode(handle, input.inviteCode, input);
+  }
+
+  // mode === "open"
+  return registerUser(handle, input);
+}
+
 /**
  * Verify a `(username, password)` pair against the users table.
  *

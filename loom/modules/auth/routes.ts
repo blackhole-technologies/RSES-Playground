@@ -19,6 +19,11 @@ import {
   verifyCredentials,
   createSession,
   deleteSession,
+  registerWithMode,
+  RegistrationDisabledError,
+  InvalidInviteCodeError,
+  UsernameTakenError,
+  EmailTakenError,
 } from "./service";
 import { requireAuth } from "./middleware";
 import type { LoginRateLimiter } from "./rate-limit";
@@ -47,6 +52,19 @@ export interface AuthRoutesConfig {
 const LoginInputSchema = z.object({
   username: z.string().min(1),
   password: z.string().min(1),
+});
+
+/**
+ * Loose at the route layer — service-level Zod (in registerWithMode →
+ * registerUser) does the real regex / min-length checks and throws
+ * ZodError, which the route maps to 400. Two layers; the inner wins.
+ */
+const RegisterBodySchema = z.object({
+  username: z.string(),
+  password: z.string(),
+  email: z.string().optional(),
+  displayName: z.string().optional(),
+  inviteCode: z.string().optional(),
 });
 
 export function createAuthRouter(
@@ -113,6 +131,59 @@ export function createAuthRouter(
   router.get("/me", requireAuth, (req, res) => {
     // requireAuth guarantees req.user is set.
     res.status(200).json({ user: toSafeUser(req.user!) });
+  });
+
+  router.post("/register", async (req, res, next) => {
+    try {
+      const parsed = RegisterBodySchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({
+          error: "invalid_request",
+          issues: parsed.error.issues,
+        });
+        return;
+      }
+
+      const user = await registerWithMode(handle, parsed.data);
+
+      // Auto-login on successful register: create a session, set
+      // cookie. Same flow as /setup. Caller gets a usable session
+      // immediately rather than having to follow up with /login.
+      const userAgentHeader = req.headers["user-agent"];
+      const session = await createSession(handle, user.id, {
+        ip: req.ip,
+        userAgent: Array.isArray(userAgentHeader)
+          ? userAgentHeader.join(", ")
+          : userAgentHeader,
+      });
+      setSessionCookie(res, cookieName, session.cookie, cookieSecure);
+      res.status(201).json({ user: toSafeUser(user) });
+    } catch (err) {
+      if (err instanceof RegistrationDisabledError) {
+        res.status(403).json({ error: "registration_disabled" });
+        return;
+      }
+      if (err instanceof InvalidInviteCodeError) {
+        res.status(400).json({ error: "invalid_invite_code" });
+        return;
+      }
+      if (err instanceof UsernameTakenError) {
+        res.status(409).json({ error: "username_taken" });
+        return;
+      }
+      if (err instanceof EmailTakenError) {
+        res.status(409).json({ error: "email_taken" });
+        return;
+      }
+      if (err instanceof z.ZodError) {
+        res.status(400).json({
+          error: "invalid_request",
+          issues: err.issues,
+        });
+        return;
+      }
+      next(err);
+    }
   });
 
   return router;
