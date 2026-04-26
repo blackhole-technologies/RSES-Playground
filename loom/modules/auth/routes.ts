@@ -20,6 +20,7 @@ import {
   createSession,
   deleteSession,
   registerWithMode,
+  getRegistrationMode,
   RegistrationDisabledError,
   InvalidInviteCodeError,
   UsernameTakenError,
@@ -47,6 +48,13 @@ export interface AuthRoutesConfig {
    * keep this aligned with the cookieName choice.
    */
   cookieSecure?: boolean;
+  /**
+   * Optional per-IP rate limiter applied to /register in "open"
+   * registration_mode (SPEC §5.2: 3 per IP per hour). When omitted,
+   * the per-IP gate is disabled — the per-username login limiter is
+   * still wired separately through the second positional argument.
+   */
+  ipRateLimiter?: LoginRateLimiter;
 }
 
 const LoginInputSchema = z.object({
@@ -75,6 +83,7 @@ export function createAuthRouter(
   const cookieName = config.cookieName ?? "session";
   const cookieSecure =
     config.cookieSecure ?? process.env.NODE_ENV === "production";
+  const ipRateLimiter = config.ipRateLimiter;
 
   const router = Router();
 
@@ -142,6 +151,33 @@ export function createAuthRouter(
           issues: parsed.error.issues,
         });
         return;
+      }
+
+      // Per-SPEC §5.2 the per-IP limit only applies to open-mode
+      // register. Read the mode now so the limiter check fires BEFORE
+      // any registration work. The double-read (registerWithMode reads
+      // it again) is a couple of cheap cached-page lookups; not worth
+      // the service-layer coupling to avoid.
+      if (ipRateLimiter) {
+        const mode = await getRegistrationMode(handle);
+        if (mode === "open") {
+          const ip = req.ip ?? "unknown";
+          if (ipRateLimiter.isLocked(ip)) {
+            const retryAfterMs = ipRateLimiter.retryAfterMs(ip);
+            res.set("Retry-After", String(Math.ceil(retryAfterMs / 1000)));
+            res.status(429).json({
+              error: "rate_limited",
+              retryAfterMs,
+            });
+            return;
+          }
+          // Consume a slot up-front: every attempt (success or
+          // failure) counts toward the 3/hour limit. Doing this
+          // before the actual register work means a failing
+          // registration still costs the IP one slot, which is the
+          // intended anti-spam behavior.
+          ipRateLimiter.recordFailure(ip);
+        }
       }
 
       const user = await registerWithMode(handle, parsed.data);

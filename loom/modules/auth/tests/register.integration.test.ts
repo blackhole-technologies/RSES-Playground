@@ -23,7 +23,10 @@ import { createMigrationRunner } from "../../../core/migrations/runner";
 import type { DbHandle } from "../../../core/db";
 import { createAuthMiddleware } from "../middleware";
 import { createAuthRouter } from "../routes";
-import { createLoginRateLimiter } from "../rate-limit";
+import {
+  createIpRateLimiter,
+  createLoginRateLimiter,
+} from "../rate-limit";
 
 const DB_URL = process.env.TEST_DATABASE_URL;
 
@@ -50,12 +53,21 @@ interface TestServer {
   close(): Promise<void>;
 }
 
-async function startServer(handle: DbHandle): Promise<TestServer> {
+async function startServer(
+  handle: DbHandle,
+  options: { withIpLimiter?: boolean } = {},
+): Promise<TestServer> {
   const app = express();
   app.use(express.json());
   const rateLimiter = createLoginRateLimiter();
+  const ipRateLimiter = options.withIpLimiter
+    ? createIpRateLimiter()
+    : undefined;
   app.use(createAuthMiddleware(handle));
-  app.use("/api/auth", createAuthRouter(handle, rateLimiter));
+  app.use(
+    "/api/auth",
+    createAuthRouter(handle, rateLimiter, { ipRateLimiter }),
+  );
   const server = http.createServer(app);
   await new Promise<void>((resolve) => server.listen(0, resolve));
   const addr = server.address();
@@ -237,6 +249,68 @@ describe.skipIf(!DB_URL)("POST /api/auth/register", () => {
       }
     });
 
+    it("rate-limits the 4th attempt from the same IP (3 per hour per SPEC §5.2)", async () => {
+      const srv = await startServer(handle, { withIpLimiter: true });
+      try {
+        // Three legitimate registers from the same IP — all succeed.
+        for (let i = 0; i < 3; i++) {
+          const res = await fetch(`${srv.baseUrl}/api/auth/register`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              username: `iprl${i}`,
+              password: "passw0rd",
+            }),
+          });
+          expect(res.status).toBe(201);
+        }
+        // Fourth attempt — same IP, distinct username — must be 429.
+        const res = await fetch(`${srv.baseUrl}/api/auth/register`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            username: "iprl3",
+            password: "passw0rd",
+          }),
+        });
+        expect(res.status).toBe(429);
+        const body = await res.json();
+        expect(body.error).toBe("rate_limited");
+        expect(res.headers.get("Retry-After")).toBeDefined();
+        const retryAfter = Number(res.headers.get("Retry-After"));
+        expect(retryAfter).toBeGreaterThan(0);
+        expect(retryAfter).toBeLessThanOrEqual(60 * 60);
+
+        // The 4th user did NOT get created.
+        const count = await pool.query<{ count: string }>(
+          "SELECT COUNT(*)::text AS count FROM users WHERE username LIKE 'iprl%'",
+        );
+        expect(count.rows[0].count).toBe("3");
+      } finally {
+        await srv.close();
+      }
+    });
+
+    it("does NOT rate-limit when ipRateLimiter is omitted from config", async () => {
+      // No withIpLimiter — five rapid attempts all succeed.
+      const srv = await startServer(handle);
+      try {
+        for (let i = 0; i < 5; i++) {
+          const res = await fetch(`${srv.baseUrl}/api/auth/register`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              username: `nolim${i}`,
+              password: "passw0rd",
+            }),
+          });
+          expect(res.status).toBe(201);
+        }
+      } finally {
+        await srv.close();
+      }
+    });
+
     it("400 invalid_request on bad input (e.g., short password)", async () => {
       const srv = await startServer(handle);
       try {
@@ -381,6 +455,29 @@ describe.skipIf(!DB_URL)("POST /api/auth/register", () => {
         });
         expect(res.status).toBe(400);
         expect(await res.json()).toEqual({ error: "invalid_invite_code" });
+      } finally {
+        await srv.close();
+      }
+    });
+
+    it("does NOT apply the per-IP rate limit (invite mode is gated by codes, not IP)", async () => {
+      // In invite mode, even bad codes should not consume IP slots —
+      // the route never reads the IP limiter for non-open modes.
+      const srv = await startServer(handle, { withIpLimiter: true });
+      try {
+        // Five rapid-fire bad-code attempts. None get rate-limited.
+        for (let i = 0; i < 5; i++) {
+          const res = await fetch(`${srv.baseUrl}/api/auth/register`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              username: `noinvite${i}`,
+              password: "passw0rd",
+              inviteCode: "wrong",
+            }),
+          });
+          expect(res.status).toBe(400);
+        }
       } finally {
         await srv.close();
       }

@@ -64,6 +64,16 @@ export interface LoginRateLimiterConfig {
 const DEFAULT_MAX_FAILURES = 5;
 const DEFAULT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
 
+// IP-based register rate limiting (SPEC §5.2): 3 register attempts per
+// IP per hour for the "open" registration_mode. The defaults below are
+// passed through `createLoginRateLimiter` since the underlying
+// data-structure is identical — only the keying intent differs. For
+// IP usage, callers `recordFailure(ip)` on every register attempt
+// regardless of outcome (the method is misnamed for this use; the
+// alternative was a wider rename that touched every call site).
+const DEFAULT_IP_MAX_ATTEMPTS = 3;
+const DEFAULT_IP_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+
 export function createLoginRateLimiter(
   config: Partial<LoginRateLimiterConfig> = {},
 ): LoginRateLimiter {
@@ -130,4 +140,21 @@ export function createLoginRateLimiter(
   }
 
   return { isLocked, retryAfterMs, recordFailure, recordSuccess, reset };
+}
+
+/**
+ * Convenience factory for the per-IP register limiter. Same shape as
+ * the login limiter but with SPEC §5.2's defaults (3 attempts / 1
+ * hour). Bootstrap creates one of these and feeds it to
+ * createAuthRouter; the /register handler keys by `req.ip` and treats
+ * every attempt (success or failure) as a slot consumption.
+ */
+export function createIpRateLimiter(
+  config: Partial<LoginRateLimiterConfig> = {},
+): LoginRateLimiter {
+  return createLoginRateLimiter({
+    maxFailures: DEFAULT_IP_MAX_ATTEMPTS,
+    windowMs: DEFAULT_IP_WINDOW_MS,
+    ...config,
+  });
 }

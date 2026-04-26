@@ -19,7 +19,10 @@ import { createBootstrapToken } from "../modules/auth/service";
 import { createAuthMiddleware } from "../modules/auth/middleware";
 import { createAuthRouter } from "../modules/auth/routes";
 import { createSetupRouter } from "../modules/auth/setup-routes";
-import { createLoginRateLimiter } from "../modules/auth/rate-limit";
+import {
+  createIpRateLimiter,
+  createLoginRateLimiter,
+} from "../modules/auth/rate-limit";
 import { createAdminRouter } from "../modules/admin/routes";
 
 export interface App {
@@ -85,6 +88,9 @@ export async function bootstrap(): Promise<BootstrapResult> {
   const events = createEventBus();
   const hooks = createHookRegistry();
   const rateLimiter = createLoginRateLimiter();
+  // Per-IP register limiter: 3/hour per SPEC §5.2. Active only on
+  // open-mode register (the route honors the registration_mode gate).
+  const ipRateLimiter = createIpRateLimiter();
 
   const expressApp = express();
   if (config.trustProxy) expressApp.set("trust proxy", true);
@@ -120,7 +126,11 @@ export async function bootstrap(): Promise<BootstrapResult> {
   expressApp.use(createAuthMiddleware(db, { cookieName }));
   expressApp.use(
     "/api/auth",
-    createAuthRouter(db, rateLimiter, { cookieName, cookieSecure }),
+    createAuthRouter(db, rateLimiter, {
+      cookieName,
+      cookieSecure,
+      ipRateLimiter,
+    }),
   );
   expressApp.use(
     "/setup",
